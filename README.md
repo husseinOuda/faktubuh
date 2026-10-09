@@ -39,9 +39,26 @@ invoice_system/
 │
 ├── main.py
 ├── database.py
+├── invoices.db
 ├── pdf_generator.py
+├── theme.py
+│
+├── ui/
+│   ├── invoices_page.py
+│   ├── saved_invoices_page.py 
+│   ├── clients_page.py
+│   ├── reports_page.py
+│   ├── components/
+│   │   ├── sidebar.py
+│   │   ├── cards.py
+│   │   ├── buttons.py
+│   │   ├── tables.py
+│   │   └── pdf_preview.py
+│
 ├── assets/
-│   └── logo.png
+│   ├── logo.png
+│   ├── Cairo-Regular.ttf
+│   └── icons/
 
 
 ```
