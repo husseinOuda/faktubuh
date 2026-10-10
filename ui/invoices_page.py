@@ -2,6 +2,7 @@
 
 import os
 import customtkinter as ctk
+import tkinter as tk
 from tkinter import messagebox, ttk
 from datetime import date
 
@@ -35,6 +36,10 @@ class InvoicesPage(ctk.CTkFrame):
         self.items = []
         self.edit_mode = False
         self.edit_invoice_id = None
+
+        # محرر الخلية داخل جدول الأصناف
+        self._cell_editor = None
+        self._cell_editor_state = None
 
         # =========================
         # HEADER
@@ -299,6 +304,22 @@ class InvoicesPage(ctk.CTkFrame):
             pady=10
         )
 
+        # تعديل الصنف مباشرة داخل الجدول
+        # ======================
+        self.items_table.bind("<Double-1>", self.on_item_double_click)
+        self.items_table.bind("<F2>", self.on_item_f2)
+        self.items_table.bind("<Delete>", self.delete_selected_item)
+        self.items_table.bind("<MouseWheel>", self.on_items_table_scroll, add="+")
+
+        # زر حذف الصنف
+        # ======================
+        ctk.CTkButton(
+            right_panel,
+            text="🗑 حذف الصنف",
+            command=self.delete_selected_item,
+            **DANGER_BTN
+        ).pack(pady=(0, 5))
+
         # ======================
         # الإجمالي
         # ======================
@@ -387,6 +408,26 @@ class InvoicesPage(ctk.CTkFrame):
             **PRIMARY_BTN
         ).grid(row=1, column=1, padx=5, pady=5, sticky="ew")
 
+        # زر إلغاء التعديل (يظهر فقط في وضع التعديل)
+        self.cancel_edit_btn = ctk.CTkButton(
+            buttons_frame,
+            text="✖ إلغاء التعديل",
+            command=self.cancel_edit,
+            fg_color="#6b7280",
+            hover_color="#4b5563",
+            height=45,
+            corner_radius=10,
+            font=("Cairo", 14, "bold")
+        )
+        self.cancel_edit_btn.grid(
+            row=2,
+            column=0,
+            columnspan=2,
+            padx=5,
+            pady=5,
+            sticky="ew"
+        )
+        self.cancel_edit_btn.grid_remove()
 
     # ======================
     # إضافة صنف
@@ -416,17 +457,22 @@ class InvoicesPage(ctk.CTkFrame):
     # تحديث جدول الأصناف
     # ======================
     def refresh_items(self):
+        # إغلاق محرر الخلية إن كان مفتوحاً
+        self._destroy_cell_editor()
+
         # تنظيف الجدول 
-        for item in self.items_table.get_children():
-            self.items_table.delete(item)
+        for row in self.items_table.get_children():
+            self.items_table.delete(row)
 
         total = 0
 
-        for item in self.items:
+        for index, item in enumerate(self.items):
 
+            # iid = موضع الصنف في القائمة self.items
             self.items_table.insert(
                 "",
                 "end",
+                iid=str(index),
                 values=(
                     item["name"],
                     item["desc"],
@@ -439,10 +485,254 @@ class InvoicesPage(ctk.CTkFrame):
 
         self.total_label.configure(text=f"الإجمالي: {total}")
 
+    # ======================
+    # تعديل الأصناف داخل الجدول (Inline Edit)
+    # ======================
+    # الأعمدة القابلة للتعديل بالترتيب (الإجمالي يُحسب تلقائياً)
+    EDITABLE_COLUMNS = ("name", "desc", "qty", "price")
+    ALL_COLUMNS = ("name", "desc", "qty", "price", "total")
+
+    def on_item_double_click(self, event):
+        """نقر مزدوج على خلية → فتح محرر فوقها."""
+        if self.items_table.identify_region(event.x, event.y) != "cell":
+            return
+
+        row_id = self.items_table.identify_row(event.y)
+        col_index = int(self.items_table.identify_column(event.x)[1:]) - 1
+
+        if not row_id or col_index < 0:
+            return
+
+        column = self.ALL_COLUMNS[col_index]
+
+        # عمود الإجمالي للقراءة فقط
+        if column not in self.EDITABLE_COLUMNS:
+            return "break"
+
+        self._start_cell_edit(row_id, column)
+        return "break"
+
+    def on_item_f2(self, event=None):
+        """F2 → تعديل أول خلية في الصنف المحدد."""
+        selected = self.items_table.selection()
+
+        if selected:
+            self._start_cell_edit(selected[0], self.EDITABLE_COLUMNS[0])
+
+        return "break"
+
+    def on_items_table_scroll(self, event=None):
+        # عند التمرير يتغير موضع الصفوف، فنحفظ التعديل ونغلق المحرر
+        self._finish_cell_edit(commit=True)
+
+    def _start_cell_edit(self, row_id, column):
+        # حفظ أي تعديل مفتوح قبل فتح خلية جديدة
+        if not self._finish_cell_edit(commit=True):
+            return
+
+        # تأكد أن الصف ظاهر في الجدول (عند وجود تمرير)
+        self.items_table.see(row_id)
+        self.items_table.update_idletasks()
+
+        bbox = self.items_table.bbox(row_id, column)
+
+        if not bbox:
+            return
+
+        x, y, width, height = bbox
+        index = int(row_id)
+        current_value = self.items[index].get(column, "")
+
+        if current_value is None:
+            current_value = ""
+
+        self.items_table.selection_set(row_id)
+        self.items_table.focus(row_id)
+
+        editor = tk.Entry(
+            self.items_table,
+            font=("Cairo", 12),
+            justify="center",
+            relief="solid",
+            bd=1,
+            highlightthickness=2,
+            highlightcolor="#2563eb",
+            highlightbackground="#2563eb"
+        )
+        editor.insert(0, str(current_value))
+        editor.select_range(0, "end")
+        editor.place(x=x, y=y, width=width, height=height)
+        editor.focus_set()
+
+        self._cell_editor = editor
+        self._cell_editor_state = {"index": index, "column": column}
+
+        editor.bind("<Return>", lambda e: self._on_editor_enter())
+        editor.bind("<KP_Enter>", lambda e: self._on_editor_enter())
+        editor.bind("<Escape>", lambda e: self._on_editor_escape())
+        editor.bind("<Tab>", lambda e: self._on_editor_tab(forward=True))
+        editor.bind("<ISO_Left_Tab>", lambda e: self._on_editor_tab(forward=False))
+        editor.bind("<Shift-Tab>", lambda e: self._on_editor_tab(forward=False))
+        editor.bind("<FocusOut>", lambda e: self._on_editor_focus_out())
+
+    def _on_editor_enter(self):
+        self._finish_cell_edit(commit=True, show_error=True)
+        return "break"
+
+    def _on_editor_escape(self):
+        self._finish_cell_edit(commit=False)
+        return "break"
+
+    def _on_editor_focus_out(self):
+        # عند فقدان التركيز: نحفظ إن كانت القيمة صحيحة، وإلا نتراجع بصمت
+        if self._cell_editor is not None:
+            self._finish_cell_edit(commit=True)
+
+    def _on_editor_tab(self, forward=True):
+        """Tab / Shift+Tab → الانتقال للخلية القابلة للتعديل التالية/السابقة."""
+        state = self._cell_editor_state
+
+        if not state:
+            return "break"
+
+        index = state["index"]
+        pos = self.EDITABLE_COLUMNS.index(state["column"])
+        pos += 1 if forward else -1
+
+        if not self._finish_cell_edit(commit=True, show_error=True):
+            return "break"
+
+        if 0 <= pos < len(self.EDITABLE_COLUMNS):
+            self._start_cell_edit(str(index), self.EDITABLE_COLUMNS[pos])
+
+        return "break"
+
+    def _validate_cell_value(self, column, text):
+        """يرجع (القيمة المحوّلة، رسالة الخطأ). رسالة الخطأ None إن كانت القيمة صحيحة."""
+        text = text.strip()
+
+        if column == "name":
+            if not text:
+                return None, "اسم الصنف لا يمكن أن يكون فارغاً"
+            return text, None
+
+        if column == "desc":
+            return text, None
+
+        if column == "qty":
+            try:
+                return int(text), None
+            except ValueError:
+                return None, "الكمية يجب أن تكون رقماً صحيحاً"
+
+        if column == "price":
+            try:
+                return float(text), None
+            except ValueError:
+                return None, "السعر يجب أن يكون رقماً"
+
+        return None, "عمود غير قابل للتعديل"
+
+    def _finish_cell_edit(self, commit=True, show_error=False):
+        """
+        إنهاء التعديل الجاري.
+        يرجع True إذا أُغلق المحرر (أو لم يكن مفتوحاً)،
+        و False إذا بقي مفتوحاً بسبب قيمة غير صحيحة.
+        """
+        editor = self._cell_editor
+        state = self._cell_editor_state
+
+        if editor is None or state is None:
+            return True
+
+        if not commit:
+            self._destroy_cell_editor()
+            return True
+
+        index = state["index"]
+        column = state["column"]
+
+        value, error = self._validate_cell_value(column, editor.get())
+
+        if error:
+            if show_error:
+                # نُبقي المحرر مفتوحاً ونلوّنه بالأحمر ليصحح المستخدم القيمة
+                editor.configure(
+                    bg="#fee2e2",
+                    highlightcolor="#dc2626",
+                    highlightbackground="#dc2626"
+                )
+                self.bell()
+                return False
+
+            # فقدان تركيز مع قيمة غير صحيحة → تراجع عن التعديل
+            self._destroy_cell_editor()
+            return True
+
+        # تطبيق القيمة وإعادة حساب إجمالي الصنف
+        item = self.items[index]
+        item[column] = value
+        item["total"] = round(item["qty"] * item["price"], 2)
+
+        self._destroy_cell_editor()
+        self.refresh_items()
+
+        # إبقاء الصف محدداً بعد التحديث
+        row_id = str(index)
+        if self.items_table.exists(row_id):
+            self.items_table.selection_set(row_id)
+            self.items_table.focus(row_id)
+
+        return True
+
+    def _destroy_cell_editor(self):
+        editor = self._cell_editor
+
+        # نصفّر الحالة أولاً حتى لا يعيد FocusOut استدعاء الإنهاء
+        self._cell_editor = None
+        self._cell_editor_state = None
+
+        if editor is not None:
+            try:
+                editor.destroy()
+            except tk.TclError:
+                pass
+
     def remove_item(self, index):
         self.items.pop(index)
         self.refresh_items()
 
+    # ======================
+    # حذف الأصناف المحددة من الجدول
+    # ======================
+    def delete_selected_item(self, event=None):
+        selected = self.items_table.selection()
+
+        if not selected:
+            messagebox.showwarning(
+                "تنبيه",
+                "يرجى تحديد صنف أولاً"
+            )
+            return "break"
+
+        count = len(selected)
+
+        if count == 1:
+            index = int(selected[0])
+            name = self.items[index]["name"]
+            question = f"هل تريد حذف الصنف \"{name}\"؟"
+        else:
+            question = f"هل تريد حذف {count} أصناف محددة؟"
+
+        if not messagebox.askyesno("تأكيد الحذف", question):
+            return "break"
+
+        # الحذف من الأكبر إلى الأصغر حتى لا تتغير مواضع الأصناف المتبقية
+        for iid in sorted(selected, key=int, reverse=True):
+            self.remove_item(int(iid))
+
+        return "break"
+    
     # ======================
     # معاينة الفاتورة
     # ======================
@@ -583,7 +873,6 @@ class InvoicesPage(ctk.CTkFrame):
                 update_invoice(
                     self.edit_invoice_id,
                     client_id,
-                    str(date.today()),
                     self.items
                 )
 
@@ -616,6 +905,7 @@ class InvoicesPage(ctk.CTkFrame):
             text="💾 حفظ الفاتورة"
         )
 
+        self.set_cancel_button_visible(False)
         self.refresh_items()
         self.clear_inputs()
         self.client_var.set("")
@@ -662,7 +952,7 @@ class InvoicesPage(ctk.CTkFrame):
         for item in items:
             self.items.append({
                 "name": item[0],
-                "desc": item[1],
+                "desc": item[1] or "",
                 "qty": item[2],
                 "price": item[3],
                 "total": item[4]
@@ -675,11 +965,95 @@ class InvoicesPage(ctk.CTkFrame):
         self.save_btn.configure(
             text="💾 حفظ التعديلات"
         )
-
+        
         messagebox.showinfo(
             "تعديل",
             f"أنت الآن تعدل الفاتورة رقم {invoice_number}"
         )
+
+        self.set_cancel_button_visible(True)
+
+    # ======================
+    # نسخ فاتورة محفوظة كفاتورة جديدة
+    # ======================
+    def copy_invoice(self, invoice_id):
+
+        invoice_info = get_invoice_info(invoice_id)
+
+        if not invoice_info:
+            messagebox.showerror(
+                "خطأ",
+                "تعذر العثور على الفاتورة"
+            )
+            return
+
+        items = get_invoice_items(invoice_id)
+
+        invoice_number = invoice_info[1]
+        client_name = invoice_info[2] or ""
+
+        # وضع الإنشاء (فاتورة جديدة وليس تعديلاً)
+        self.edit_mode = False
+        self.edit_invoice_id = None
+
+        self.save_btn.configure(
+            text="💾 حفظ الفاتورة"
+        )
+
+        self.set_cancel_button_visible(False)
+        
+        # نسخ العميل والأصناف
+        self.client_var.set(client_name)
+
+        self.items = []
+
+        for item in items:
+            self.items.append({
+                "name": item[0],
+                "desc": item[1] or "",
+                "qty": item[2],
+                "price": item[3],
+                "total": item[4]
+            })
+
+        self.refresh_items()
+        self.clear_inputs()
+
+        messagebox.showinfo(
+            "نسخ",
+            f"تم نسخ بيانات الفاتورة رقم {invoice_number}\n"
+            "عدّل ما تريد ثم اضغط \"حفظ الفاتورة\" لإنشاء فاتورة جديدة"
+        )
+
+    # ======================
+    # إظهار / إخفاء زر إلغاء التعديل
+    # ======================
+    def set_cancel_button_visible(self, visible):
+
+        if visible:
+            self.cancel_edit_btn.grid()
+        else:
+            self.cancel_edit_btn.grid_remove()
+
+    # ======================
+    # إلغاء تعديل الفاتورة والعودة للقائمة
+    # ======================
+    def cancel_edit(self):
+
+        if not self.edit_mode:
+            return
+
+        confirm = messagebox.askyesno(
+            "إلغاء التعديل",
+            "هل تريد إلغاء تعديل الفاتورة؟\n"
+            "لن تُحفظ أي تغييرات أجريتها."
+        )
+
+        if not confirm:
+            return
+
+        # العودة لصفحة الفواتير المحفوظة (تُبنى الصفحة من جديد)
+        self.app.show_saved_invoices()
 
     # ======================
     # معاينة قبل حفظ الفاتورة الحالية

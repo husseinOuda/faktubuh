@@ -255,26 +255,26 @@ def delete_client(client_id):
 # ======================
 
 # ➕ إضافة فاتورة
-def save_invoice(invoice_id, client_id, date, items):
+def save_invoice(client_id, date, items):
     conn = connect()
     cursor = conn.cursor()
 
     total = sum(item['total'] for item in items)
 
-    # إنشاء رقم فاتورة 
-    invoice_id = generate_invoice_number()
+    # إنشاء رقم فاتورة
+    invoice_number = generate_invoice_number()
 
     cursor.execute(
         """
         INSERT INTO invoices
-        (invoice_id, client_id, date, items)
+        (client_id, total, date, invoice_number)
         VALUES (?, ?, ?, ?)
         """,
         (
-            invoice_id,
             client_id,
+            total,
             date,
-            items
+            invoice_number
         )
     )
 
@@ -293,7 +293,7 @@ def save_invoice(invoice_id, client_id, date, items):
             item['price'],
             item['total']
         ))
-        
+
     conn.commit()
     conn.close()
 
@@ -388,7 +388,7 @@ def delete_invoice(invoice_id):
 
 # ✏️ تعديل فاتورة
 # ======================
-def update_invoice(invoice_id, client_id, date, items):
+def update_invoice(invoice_id, client_id, items):
     conn = connect()
     cursor = conn.cursor()
 
@@ -397,10 +397,10 @@ def update_invoice(invoice_id, client_id, date, items):
     cursor.execute(
         """
         UPDATE invoices
-        SET client_id=?, total=?, date=?
+        SET client_id=?, total=?
         WHERE id=?
         """,
-        (client_id, total, date, invoice_id)
+        (client_id, total, invoice_id)
     )
 
     # حذف الأصناف القديمة
@@ -439,13 +439,24 @@ def generate_invoice_number():
 
     cursor = conn.cursor()
 
+    year = datetime.now().year
+
+    # أرقام هذه السنة فقط (كل سنة تبدأ من 0001)
     cursor.execute(
-        "SELECT COUNT(*) FROM invoices"
+        "SELECT invoice_number FROM invoices WHERE invoice_number LIKE ?",
+        (f"INV-{year}-%",)
     )
 
-    count = cursor.fetchone()[0] + 1
+    # أكبر رقم تسلسلي مستخدم (الجزء الأخير من INV-2026-0014)
+    last = 0
 
-    year = datetime.now().year
+    for (number,) in cursor.fetchall():
+        try:
+            last = max(last, int(str(number).split("-")[-1]))
+        except ValueError:
+            continue
+
+    count = last + 1
 
     invoice_number = f"INV-{year}-{count:04d}"
 

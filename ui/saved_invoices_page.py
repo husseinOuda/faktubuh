@@ -204,6 +204,18 @@ class SavedInvoicesPage(ctk.CTkFrame):
             padx=10
         )
 
+        # عدد الفواتير المعروضة بعد التصفية
+        self.result_count_label = ctk.CTkLabel(
+            self.filter_frame,
+            text="",
+            font=("Cairo", 14, "bold"),
+            text_color="#2563eb"
+        )
+        self.result_count_label.pack(
+            side="right",
+            padx=15
+        )
+
         # ======================
         # إنشاء جدول الفواتير 
         # ======================
@@ -217,6 +229,14 @@ class SavedInvoicesPage(ctk.CTkFrame):
         self.invoice_table = ttk.Treeview(
             self.invoices_frame,
             columns=(
+                "number",
+                "client",
+                "date",
+                "total",
+                "no"
+            ),
+            displaycolumns=(
+                "no",
                 "number",
                 "client",
                 "date",
@@ -279,6 +299,16 @@ class SavedInvoicesPage(ctk.CTkFrame):
             anchor="center"
         )
 
+        # عمود الترقيم التلقائي
+        self.invoice_table.heading("no", text="#")
+
+        self.invoice_table.column(
+            "no",
+            width=60,
+            anchor="center",
+            stretch=False
+        )
+
         # شريط تمرير للجداول Scrollbar 
         # ======================
         self.v_scroll = ttk.Scrollbar(
@@ -291,6 +321,22 @@ class SavedInvoicesPage(ctk.CTkFrame):
         self.invoice_table.configure(yscrollcommand=self.v_scroll.set)
         self.v_scroll.grid(row=0, column=1, sticky="ns", pady=10)
 
+        # تمييز الصف عند مرور الفأرة
+        # ======================
+        self._hover_row = None
+        self.invoice_table.tag_configure("hover", background="#e0e7ff")
+
+        self.invoice_table.bind("<Motion>", self.on_table_hover)
+        self.invoice_table.bind("<Leave>", self.on_table_leave)
+        self.invoice_table.bind("<<TreeviewSelect>>", self.on_table_select)
+
+        # اختصارات لوحة المفاتيح
+        # ======================
+        self.invoice_table.bind("<Return>", self.on_enter_key)
+        self.invoice_table.bind("<KP_Enter>", self.on_enter_key)
+        self.invoice_table.bind("<Delete>", self.on_delete_key)
+        self.invoice_table.bind("<Double-1>", self.on_double_click)
+
         # ======================
         # أزرار الإدارة
         # ======================
@@ -302,7 +348,7 @@ class SavedInvoicesPage(ctk.CTkFrame):
             padx=10,
             pady=(0,10)
         )
-        self.actions_frame.grid_columnconfigure((0,1,2,3,4,5), weight=1)
+        self.actions_frame.grid_columnconfigure((0,1,2,3,4,5,6), weight=1)
 
         self.preview_btn = ctk.CTkButton(
             self.actions_frame,
@@ -348,6 +394,13 @@ class SavedInvoicesPage(ctk.CTkFrame):
         )
         self.export_btn.grid(row=0, column=5, padx=5, pady=5, sticky="ew")
         
+        self.copy_btn = ctk.CTkButton(
+            self.actions_frame,
+            text="📋 نسخ الفاتورة",
+            command=self.copy_selected_invoice
+        )
+        self.copy_btn.grid(row=0, column=6, padx=5, pady=5, sticky="ew")
+
         self.load_invoices()
 
 
@@ -374,7 +427,8 @@ class SavedInvoicesPage(ctk.CTkFrame):
                     total
                 )
             )
-
+        self.renumber_rows()
+        self.update_count_label(len(invoices), len(invoices))
         self.update_stats(invoices)
 
     # ======================
@@ -438,6 +492,20 @@ class SavedInvoicesPage(ctk.CTkFrame):
         invoices_page = self.app.pages["invoices"]
         invoices_page.edit_invoice(invoice_id)
 
+    # ======================
+    # نسخ الفاتورة المحددة
+    # ======================
+    def copy_selected_invoice(self):
+        data = self.get_selected_invoice()
+
+        if not data:
+            return
+
+        invoice_id, _ = data
+
+        self.app.show_invoices()
+        invoices_page = self.app.pages["invoices"]
+        invoices_page.copy_invoice(invoice_id)
 
     # ======================
     # البحث الفوري
@@ -544,8 +612,103 @@ class SavedInvoicesPage(ctk.CTkFrame):
                     total
                 )
             )
-
+        self.renumber_rows()
+        self.update_count_label(len(filtered_invoices), len(invoices))
         self.update_stats(filtered_invoices)
+    
+    # ======================
+    # إعادة ترقيم الصفوف تلقائياً
+    # ======================
+    def renumber_rows(self):
+
+        for number, item in enumerate(
+            self.invoice_table.get_children(),
+            start=1
+        ):
+            self.invoice_table.set(item, "no", number)
+
+    # ======================
+    # تمييز الصف عند مرور الفأرة
+    # ======================
+    def on_table_hover(self, event):
+
+        row = self.invoice_table.identify_row(event.y)
+
+        # نفس الصف ومميّز بالفعل → لا حاجة لأي تغيير
+        if (
+            row
+            and row == self._hover_row
+            and "hover" in self.invoice_table.item(row, "tags")
+        ):
+            return
+
+        self._clear_hover()
+
+        # لا نميّز الصف المحدد حتى يبقى لون التحديد ظاهراً
+        if row and row not in self.invoice_table.selection():
+            self.invoice_table.item(row, tags=("hover",))
+            self._hover_row = row
+
+    def on_table_leave(self, event):
+        self._clear_hover()
+
+    def on_table_select(self, event):
+        self._clear_hover()
+
+    def _clear_hover(self):
+
+        if (
+            self._hover_row is not None
+            and self.invoice_table.exists(self._hover_row)
+        ):
+            self.invoice_table.item(self._hover_row, tags=())
+
+        self._hover_row = None
+
+    # ======================
+    # Enter → فتح التعديل / Delete → حذف الفاتورة
+    # ======================
+    def on_enter_key(self, event=None):
+
+        if self.invoice_table.selection():
+            self.edit_selected_invoice()
+
+        return "break"
+
+    def on_delete_key(self, event=None):
+
+        if self.invoice_table.selection():
+            self.delete_selected_invoice()
+
+        return "break"
+
+    # ======================
+    # نقر مزدوج → فتح التعديل مباشرة
+    # ======================
+    def on_double_click(self, event):
+
+        # تجاهل النقر على رؤوس الأعمدة أو المساحة الفارغة
+        if self.invoice_table.identify_region(event.x, event.y) != "cell":
+            return
+
+        row = self.invoice_table.identify_row(event.y)
+
+        if not row:
+            return
+
+        self.invoice_table.selection_set(row)
+        self.edit_selected_invoice()
+
+        return "break"
+    
+    # ======================
+    # عدد الفواتير المعروضة
+    # ======================
+    def update_count_label(self, shown, total):
+
+        self.result_count_label.configure(
+            text=f"📋 المعروض: {shown} من {total} فاتورة"
+        )
 
     # ======================
     # فرز الجدول
@@ -595,7 +758,7 @@ class SavedInvoicesPage(ctk.CTkFrame):
                 "",
                 index
             )
-
+        self.renumber_rows()
         self.sort_reverse = not self.sort_reverse
 
     # ======================
@@ -742,16 +905,63 @@ class SavedInvoicesPage(ctk.CTkFrame):
     # ======================
     def delete_selected_invoice(self):
 
-        data = self.get_selected_invoice()
+        selected = self.invoice_table.selection()
 
-        if not data:
+        if not selected:
+            messagebox.showwarning(
+                "تنبيه",
+                "يرجى اختيار فاتورة أولاً"
+            )
             return
 
-        invoice_id, invoice_number = data
+        # فاتورة واحدة → نفس السلوك السابق
+        if len(selected) == 1:
 
-        self.delete_invoice(
-            invoice_id,
-            invoice_number
+            data = self.get_selected_invoice()
+
+            if data:
+                invoice_id, invoice_number = data
+
+                self.delete_invoice(
+                    invoice_id,
+                    invoice_number
+                )
+
+            return
+
+        # عدة فواتير → تأكيد واحد ثم حذف الكل
+        count = len(selected)
+
+        confirm = messagebox.askyesno(
+            "تأكيد الحذف",
+            f"هل تريد حذف {count} فاتورة محددة؟\n"
+            "لا يمكن التراجع عن هذه العملية."
+        )
+
+        if not confirm:
+            return
+
+        deleted = 0
+
+        try:
+            for iid in selected:
+                db_delete_invoice(int(iid))
+                deleted += 1
+
+        except Exception as e:
+            self.load_invoices()
+
+            messagebox.showerror(
+                "خطأ",
+                f"تم حذف {deleted} من {count} فاتورة فقط:\n{e}"
+            )
+            return
+
+        self.load_invoices()
+
+        messagebox.showinfo(
+            "تم",
+            f"تم حذف {count} فاتورة بنجاح"
         )
 
     # ======================
