@@ -178,7 +178,11 @@ class ClientsPage(ctk.CTkFrame):
             messagebox.showerror("خطأ", "يرجى إدخال اسم العميل")
             return
 
-        add_client(name, phone)
+        try:
+            add_client(name, phone)
+        except ValueError as e:
+            messagebox.showerror("خطأ", str(e))
+            return
 
         self.clear_fields()
         self.load_clients()
@@ -222,11 +226,15 @@ class ClientsPage(ctk.CTkFrame):
             messagebox.showerror("خطأ", "اسم العميل مطلوب")
             return
 
-        update_client(
-            self.selected_client_id,
-            name,
-            phone
-        )
+        try:
+            update_client(
+                self.selected_client_id,
+                name,
+                phone
+            )
+        except ValueError as e:
+            messagebox.showerror("خطأ", str(e))
+            return
 
         self.load_clients()
         self.clear_fields()
@@ -250,7 +258,11 @@ class ClientsPage(ctk.CTkFrame):
         if not confirm:
             return
 
-        delete_client(self.selected_client_id)
+        try:
+            delete_client(self.selected_client_id)
+        except ValueError as e:
+            messagebox.showerror("لا يمكن الحذف", str(e))
+            return
 
         self.load_clients()
         self.clear_fields()

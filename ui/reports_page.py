@@ -63,7 +63,6 @@ class ReportsPage(ctk.CTkFrame):
         # البطاقة الأولى
         card1 = ctk.CTkFrame(
             cards_frame,
-            parent,
             fg_color="white",
             corner_radius=15
         )
@@ -77,7 +76,7 @@ class ReportsPage(ctk.CTkFrame):
 
         ctk.CTkLabel(
             card1,
-            text="125",
+            text=str(len(get_invoices())),
             font=("Cairo", 24, "bold")
         ).pack(pady=(0,15))
 

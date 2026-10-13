@@ -1184,7 +1184,11 @@ class InvoicesPage(ctk.CTkFrame):
             return
 
         # حفظ العميل
-        add_client(name, phone)
+        try:
+            add_client(name, phone)
+        except ValueError as e:
+            messagebox.showerror("خطأ", str(e))
+            return
 
         # تحديث العملاء
         self.refresh_clients_list()

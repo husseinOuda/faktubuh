@@ -3,6 +3,7 @@
 import sqlite3
 import json
 import hashlib
+from contextlib import contextmanager
 from datetime import datetime
 
 DB_NAME = "invoices.db"
@@ -15,6 +16,22 @@ def connect():
     conn = sqlite3.connect(DB_NAME)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+# اتصال آمن: commit عند النجاح، rollback عند الخطأ، وإغلاق الاتصال دائماً
+@contextmanager
+def db_connection():
+    conn = connect()
+
+    try:
+        yield conn
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        conn.close()
 
 # ======================
 # التشفير
@@ -44,7 +61,7 @@ def create_tables():
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS clients (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
+        name TEXT UNIQUE,
         phone TEXT
     )
     """)
@@ -54,9 +71,10 @@ def create_tables():
     CREATE TABLE IF NOT EXISTS invoices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         client_id INTEGER,
+        items TEXT,
         total REAL,
         date TEXT,
-        invoice_number,
+        invoice_number TEXT,
         FOREIGN KEY(client_id) REFERENCES clients(id)
     )
     """)
@@ -70,6 +88,7 @@ def create_tables():
         quantity INTEGER,
         price REAL,
         total REAL,
+        description TEXT,
         FOREIGN KEY(invoice_id) REFERENCES invoices(id)
     )
     """)
@@ -137,16 +156,15 @@ def login(username, password):
 # ➕ إضافة عميل
 # ======================
 def add_client(name, phone, address=""):
-    conn = connect()
-    cursor = conn.cursor()
+    try:
+        with db_connection() as conn:
+            conn.execute(
+                "INSERT INTO clients (name, phone) VALUES (?, ?)",
+                (name, phone)
+            )
 
-    cursor.execute(
-        "INSERT INTO clients (name, phone) VALUES (?, ?)",
-        (name, phone)
-    )
-
-    conn.commit()
-    conn.close()
+    except sqlite3.IntegrityError:
+        raise ValueError("اسم العميل موجود مسبقاً") from None
 
 
 # 📋 جلب العملاء
@@ -219,35 +237,44 @@ def search_clients(keyword):
 # ✏️ تعديل عميل
 # ======================
 def update_client(client_id, name, phone):
-    conn = connect()
-    cursor = conn.cursor()
+    try:
+        with db_connection() as conn:
+            conn.execute(
+                """
+                UPDATE clients
+                SET name=?, phone=?
+                WHERE id=?
+                """,
+                (name, phone, client_id)
+            )
 
-    cursor.execute(
-        """
-        UPDATE clients
-        SET name=?, phone=?
-        WHERE id=?
-        """,
-        (name, phone, client_id)
-    )
-
-    conn.commit()
-    conn.close()
+    except sqlite3.IntegrityError:
+        raise ValueError("اسم العميل موجود مسبقاً") from None
 
 
 # ❌ حذف عميل
 # ======================
 def delete_client(client_id):
-    conn = connect()
-    cursor = conn.cursor()
+    with db_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute(
-        "DELETE FROM clients WHERE id=?",
-        (client_id,)
-    )
+        cursor.execute(
+            "SELECT COUNT(*) FROM invoices WHERE client_id=?",
+            (client_id,)
+        )
 
-    conn.commit()
-    conn.close()
+        count = cursor.fetchone()[0]
+
+        if count:
+            raise ValueError(
+                f"لا يمكن حذف عميل لديه فواتير (عدد الفواتير: {count}).\n"
+                "احذف فواتيره أولاً."
+            )
+
+        cursor.execute(
+            "DELETE FROM clients WHERE id=?",
+            (client_id,)
+        )
 
 
 # ======================
@@ -256,46 +283,43 @@ def delete_client(client_id):
 
 # ➕ إضافة فاتورة
 def save_invoice(client_id, date, items):
-    conn = connect()
-    cursor = conn.cursor()
-
     total = sum(item['total'] for item in items)
 
     # إنشاء رقم فاتورة
     invoice_number = generate_invoice_number()
 
-    cursor.execute(
-        """
-        INSERT INTO invoices
-        (client_id, total, date, invoice_number)
-        VALUES (?, ?, ?, ?)
-        """,
-        (
-            client_id,
-            total,
-            date,
-            invoice_number
+    with db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO invoices
+            (client_id, total, date, invoice_number)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                client_id,
+                total,
+                date,
+                invoice_number
+            )
         )
-    )
 
-    invoice_id = cursor.lastrowid
+        invoice_id = cursor.lastrowid
 
-    for item in items:
-        cursor.execute("""
-            INSERT INTO invoice_items
-            (invoice_id, item_name, description, quantity, price, total)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            invoice_id,
-            item['name'],
-            item.get('desc', ''),
-            item['qty'],
-            item['price'],
-            item['total']
-        ))
-
-    conn.commit()
-    conn.close()
+        for item in items:
+            cursor.execute("""
+                INSERT INTO invoice_items
+                (invoice_id, item_name, description, quantity, price, total)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                invoice_id,
+                item['name'],
+                item.get('desc', ''),
+                item['qty'],
+                item['price'],
+                item['total']
+            ))
 
 # ======================
 # 📋 جلب الفواتير
@@ -370,65 +394,60 @@ def get_invoice_items(invoice_id):
 # ❌ حذف فاتورة
 # ======================
 def delete_invoice(invoice_id):
-    conn = connect()
-    cursor = conn.cursor()
+    with db_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute(
-        "DELETE FROM invoice_items WHERE invoice_id=?",
-        (invoice_id,)
-    )
+        cursor.execute(
+            "DELETE FROM invoice_items WHERE invoice_id=?",
+            (invoice_id,)
+        )
 
-    cursor.execute(
-        "DELETE FROM invoices WHERE id=?",
-        (invoice_id,)
-    )
-
-    conn.commit()
-    conn.close()
+        cursor.execute(
+            "DELETE FROM invoices WHERE id=?",
+            (invoice_id,)
+        )
 
 # ✏️ تعديل فاتورة
 # ======================
 def update_invoice(invoice_id, client_id, items):
-    conn = connect()
-    cursor = conn.cursor()
-
     total = sum(item['total'] for item in items)
 
-    cursor.execute(
-        """
-        UPDATE invoices
-        SET client_id=?, total=?
-        WHERE id=?
-        """,
-        (client_id, total, invoice_id)
-    )
+    with db_connection() as conn:
+        cursor = conn.cursor()
 
-    # حذف الأصناف القديمة
-    cursor.execute(
-        "DELETE FROM invoice_items WHERE invoice_id=?",
-        (invoice_id,)
-    )
-
-    # إعادة إدخال الأصناف الجديدة
-    for item in items:
         cursor.execute(
             """
-            INSERT INTO invoice_items
-            (invoice_id, item_name, description, quantity, price, total)
-            VALUES (?, ?, ?, ?, ?, ?)
+            UPDATE invoices
+            SET client_id=?, total=?
+            WHERE id=?
             """,
-            (
-                invoice_id,
-                item['name'],
-                item.get('desc', ''),
-                item['qty'],
-                item['price'],
-                item['total']
-            )
+            (client_id, total, invoice_id)
         )
 
-    conn.commit()
-    conn.close()
+        # حذف الأصناف القديمة
+        cursor.execute(
+            "DELETE FROM invoice_items WHERE invoice_id=?",
+            (invoice_id,)
+        )
+
+        # إعادة إدخال الأصناف الجديدة
+        for item in items:
+            cursor.execute(
+                """
+                INSERT INTO invoice_items
+                (invoice_id, item_name, description, quantity, price, total)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    invoice_id,
+                    item['name'],
+                    item.get('desc', ''),
+                    item['qty'],
+                    item['price'],
+                    item['total']
+                )
+            )
+
 
 # ======================
 # إنشاء رقم فاتورة احترافي
@@ -492,18 +511,54 @@ def get_profit_by_date(start, end):
 # ======================
 # ترقية قاعدة البيانات
 # ======================
+def _add_column_if_missing(cursor, table, column, definition):
+    cursor.execute(f"PRAGMA table_info({table})")
+
+    if not any(row[1] == column for row in cursor.fetchall()):
+        cursor.execute(
+            f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+        )
+
+
+def _clients_name_is_unique(cursor):
+    cursor.execute("PRAGMA index_list(clients)")
+
+    for row in cursor.fetchall():
+        index_name, is_unique = row[1], row[2]
+
+        if not is_unique:
+            continue
+
+        cursor.execute(f"PRAGMA index_info('{index_name}')")
+
+        if [col[2] for col in cursor.fetchall()] == ["name"]:
+            return True
+
+    return False
+
+
 def migrate_database():
-    conn = connect()
-    cursor = conn.cursor()
+    """يجعل أي قاعدة قديمة مطابقة للمخطط الكامل في create_tables."""
 
-    # إضافة description إذا غير موجود
-    try:
-        cursor.execute("ALTER TABLE invoice_items ADD COLUMN description TEXT")
-    except:
-        pass  # العمود موجود مسبقًا
+    with db_connection() as conn:
+        cursor = conn.cursor()
 
-    conn.commit()
-    conn.close()
+        _add_column_if_missing(cursor, "clients", "phone", "TEXT")
+        _add_column_if_missing(cursor, "invoices", "items", "TEXT")
+        _add_column_if_missing(cursor, "invoices", "invoice_number", "TEXT")
+        _add_column_if_missing(cursor, "invoice_items", "description", "TEXT")
 
+        # منع تكرار أسماء العملاء في القواعد القديمة
+        if not _clients_name_is_unique(cursor):
+            try:
+                cursor.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_name "
+                    "ON clients(name)"
+                )
+            except sqlite3.IntegrityError:
+                print(
+                    "تنبيه: توجد أسماء عملاء مكررة، لم يُفرض منع التكرار. "
+                    "عدّل الأسماء المكررة ثم أعد تشغيل البرنامج."
+                )
 
 
