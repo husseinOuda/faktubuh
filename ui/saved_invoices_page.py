@@ -408,28 +408,7 @@ class SavedInvoicesPage(ctk.CTkFrame):
     # تحميل الفواتير
     # ======================
     def load_invoices(self):
-
-        invoices = db_get_invoices()
-
-        for item in self.invoice_table.get_children():
-            self.invoice_table.delete(item)
-
-        for inv_id, invoice_number, client, date_, total in invoices:
-
-            self.invoice_table.insert(
-                "",
-                "end",
-                iid=str(inv_id),
-                values=(
-                    invoice_number,
-                    client,
-                    date_,
-                    total
-                )
-            )
-        self.renumber_rows()
-        self.update_count_label(len(invoices), len(invoices))
-        self.update_stats(invoices)
+        self.apply_filters()
 
     # ======================
     # تحديث الإحصائيات
@@ -533,13 +512,19 @@ class SavedInvoicesPage(ctk.CTkFrame):
 
         for inv_id, invoice_number, client, date_, total in invoices:
 
-            try:
-                invoice_date = datetime.strptime(
-                    date_,
-                    "%Y-%m-%d"
-                )
-            except ValueError:
-                continue
+            # التاريخ مطلوب فقط مع الفلاتر الزمنية؛ في حالة "الكل" تظهر
+            # كل الفواتير حتى التي تاريخها غير صالح
+            invoice_date = None
+
+            if selected_filter in ("اليوم", "الأسبوع", "الشهر", "سنة"):
+                try:
+                    invoice_date = datetime.strptime(
+                        date_,
+                        "%Y-%m-%d"
+                    )
+                except (ValueError, TypeError):
+                    # لا يمكن مطابقة فاتورة بلا تاريخ صالح مع فلتر زمني
+                    continue
 
             # البحث
             if search_text:

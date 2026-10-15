@@ -1,6 +1,7 @@
 # ui/invoices_page.py
 
 import os
+import math
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -260,8 +261,18 @@ class InvoicesPage(ctk.CTkFrame):
             pady=(10,5)
         )
 
-        self.items_table = ttk.Treeview(
+        table_frame = ctk.CTkFrame(
             right_panel,
+            fg_color="transparent"
+        )
+        table_frame.pack(
+            fill="x",
+            padx=10,
+            pady=10
+        )
+
+        self.items_table = ttk.Treeview(
+            table_frame,
             columns=(
                 "name",
                 "desc",
@@ -298,11 +309,16 @@ class InvoicesPage(ctk.CTkFrame):
             text="الإجمالي"
         )
 
-        self.items_table.pack(
-            fill="x",
-            padx=10,
-            pady=10
+        # شريط التمرير
+        items_scroll = ttk.Scrollbar(
+            table_frame,
+            orient="vertical",
+            command=self._on_items_scroll
         )
+        self.items_table.configure(yscrollcommand=items_scroll.set)
+
+        items_scroll.pack(side="right", fill="y")
+        self.items_table.pack(side="left", fill="both", expand=True)
 
         # تعديل الصنف مباشرة داخل الجدول
         # ======================
@@ -325,7 +341,7 @@ class InvoicesPage(ctk.CTkFrame):
         # ======================
         self.total_label = ctk.CTkLabel(
             right_panel,
-            text="الإجمالي: 0 ₪",
+            text="الإجمالي: 0.00 ₪",
             font=("Cairo", 18, "bold"),
             text_color="#2563eb"
         )
@@ -433,25 +449,42 @@ class InvoicesPage(ctk.CTkFrame):
     # إضافة صنف
     # ======================
     def add_item(self):
-        try:
-            name = self.item_name.get()
-            desc = self.item_desc.get()
-            qty = int(self.qty.get())
-            price = float(self.price.get())
-            
-            total = qty * price
 
-            self.items.append({
-                "name": name,
-                "desc": desc,
-                "qty": qty,
-                "price": price,
-                "total": total
-            })
-            self.clear_inputs()
-            self.refresh_items()
-        except:
-            messagebox.showerror("خطأ", "تحقق من البيانات")
+        # نفس قواعد التحقق المستخدمة في التعديل المباشر داخل الجدول
+        name, error = self._validate_cell_value("name", self.item_name.get())
+
+        if error:
+            messagebox.showerror("خطأ", error)
+            self.item_name.focus_set()
+            return
+
+        desc, _ = self._validate_cell_value("desc", self.item_desc.get())
+
+        qty, error = self._validate_cell_value("qty", self.qty.get())
+
+        if error:
+            messagebox.showerror("خطأ", error)
+            self.qty.focus_set()
+            return
+
+        price, error = self._validate_cell_value("price", self.price.get())
+
+        if error:
+            messagebox.showerror("خطأ", error)
+            self.price.focus_set()
+            return
+
+        self.items.append({
+            "name": name,
+            "desc": desc,
+            "qty": qty,
+            "price": price,
+            "total": round(qty * price, 2)
+        })
+
+        self.clear_inputs()
+        self.refresh_items()
+        self.item_name.focus_set()
 
     # ======================
     # تحديث جدول الأصناف
@@ -483,7 +516,7 @@ class InvoicesPage(ctk.CTkFrame):
             )
             total += item["total"]
 
-        self.total_label.configure(text=f"الإجمالي: {total}")
+        self.total_label.configure(text=f"الإجمالي: {total:,.2f} ₪")
 
     # ======================
     # تعديل الأصناف داخل الجدول (Inline Edit)
@@ -520,6 +553,11 @@ class InvoicesPage(ctk.CTkFrame):
             self._start_cell_edit(selected[0], self.EDITABLE_COLUMNS[0])
 
         return "break"
+
+    def _on_items_scroll(self, *args):
+        # حفظ التعديل المفتوح قبل تحريك الجدول بشريط التمرير
+        self._finish_cell_edit(commit=True)
+        self.items_table.yview(*args)
 
     def on_items_table_scroll(self, event=None):
         # عند التمرير يتغير موضع الصفوف، فنحفظ التعديل ونغلق المحرر
@@ -621,15 +659,25 @@ class InvoicesPage(ctk.CTkFrame):
 
         if column == "qty":
             try:
-                return int(text), None
+                qty = int(text)
             except ValueError:
                 return None, "الكمية يجب أن تكون رقماً صحيحاً"
 
+            if qty <= 0:
+                return None, "الكمية يجب أن تكون أكبر من صفر"
+
+            return qty, None
+
         if column == "price":
             try:
-                return float(text), None
+                price = float(text)
             except ValueError:
                 return None, "السعر يجب أن يكون رقماً"
+
+            if not math.isfinite(price):
+                return None, "السعر يجب أن يكون رقماً"
+
+            return price, None
 
         return None, "عمود غير قابل للتعديل"
 
@@ -839,7 +887,7 @@ class InvoicesPage(ctk.CTkFrame):
         # ======================
         ctk.CTkLabel(
             preview,
-            text=f"الإجمالي النهائي: {total} ₪",
+            text=f"الإجمالي النهائي: {total:,.2f} ₪",
             font=("Cairo", 18, "bold")
         ).pack(pady=10)
 
