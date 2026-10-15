@@ -17,14 +17,37 @@ def export_invoices_excel(invoices=None):
         if invoices is None:
             invoices = get_invoices()
 
+        rows = [
+            {
+                "ID": invoice["id"],
+                "رقم الفاتورة": invoice["invoice_number"],
+                "العميل": invoice["client"],
+                "التاريخ": invoice["date"],
+                "المجموع الفرعي": invoice["subtotal"],
+                "نسبة الخصم": invoice["discount_percent"],
+                "قيمة الخصم": invoice["discount_amount"],
+                "نسبة الضريبة": invoice["tax_percent"],
+                "قيمة الضريبة": invoice["tax_amount"],
+                "الإجمالي النهائي": invoice["total"],
+                "الملاحظات": invoice["notes"],
+            }
+            for invoice in invoices
+        ]
+
         df = pd.DataFrame(
-            invoices,
+            rows,
             columns=[
                 "ID",
                 "رقم الفاتورة",
                 "العميل",
                 "التاريخ",
-                "الإجمالي"
+                "المجموع الفرعي",
+                "نسبة الخصم",
+                "قيمة الخصم",
+                "نسبة الضريبة",
+                "قيمة الضريبة",
+                "الإجمالي النهائي",
+                "الملاحظات",
             ]
         )
 

@@ -27,6 +27,13 @@ from database import (
 from theme import ENTRY_STYLE, PRIMARY_BTN, DANGER_BTN
 
 from ui.reports_page import export_invoices_excel
+from ui.components.invoice_utils import (
+    NumberParseError,
+    calculate_invoice_totals,
+    format_money,
+    parse_number,
+    round_money
+)
 
 class InvoicesPage(ctk.CTkFrame):
     def __init__(self, parent, app):
@@ -37,6 +44,9 @@ class InvoicesPage(ctk.CTkFrame):
         self.items = []
         self.edit_mode = False
         self.edit_invoice_id = None
+
+        self.tax_percent_var = ctk.StringVar(value="0")
+        self.discount_percent_var = ctk.StringVar(value="0")
 
         # محرر الخلية داخل جدول الأصناف
         self._cell_editor = None
@@ -180,6 +190,87 @@ class InvoicesPage(ctk.CTkFrame):
 
         form_frame.grid_columnconfigure(0, weight=1)
         form_frame.grid_columnconfigure(1, weight=1)
+
+
+        # ======================
+        # الخصم والضريبة والملاحظات
+        # ======================
+        summary_frame = ctk.CTkFrame(left_panel)
+        summary_frame.pack(
+            fill="x",
+            padx=15,
+            pady=(0, 10)
+        )
+
+        summary_frame.grid_columnconfigure(0, weight=1)
+        summary_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            summary_frame,
+            text="💰 الخصم والضريبة والملاحظات",
+            font=("Cairo", 15, "bold")
+        ).grid(
+            row=0,
+            column=0,
+            columnspan=2,
+            sticky="w",
+            padx=10,
+            pady=(10, 5)
+        )
+
+        self.discount_entry = ctk.CTkEntry(
+            summary_frame,
+            textvariable=self.discount_percent_var,
+            placeholder_text="الخصم %",
+            **ENTRY_STYLE
+        )
+        self.discount_entry.grid(
+            row=1,
+            column=0,
+            padx=5,
+            pady=5,
+            sticky="ew"
+        )
+
+        self.tax_entry = ctk.CTkEntry(
+            summary_frame,
+            textvariable=self.tax_percent_var,
+            placeholder_text="الضريبة %",
+            **ENTRY_STYLE
+        )
+        self.tax_entry.grid(
+            row=1,
+            column=1,
+            padx=5,
+            pady=5,
+            sticky="ew"
+        )
+
+        self.notes_text = ctk.CTkTextbox(
+            summary_frame,
+            height=90,
+            wrap="word",
+            font=("Cairo", 13)
+        )
+        self.notes_text.grid(
+            row=2,
+            column=0,
+            columnspan=2,
+            padx=5,
+            pady=5,
+            sticky="ew"
+        )
+        self.notes_text.insert("1.0", "")
+
+        self.discount_percent_var.trace_add(
+            "write",
+            lambda *args: self.refresh_invoice_summary()
+        )
+
+        self.tax_percent_var.trace_add(
+            "write",
+            lambda *args: self.refresh_invoice_summary()
+        )
 
         # ======================
         # إدخال صنف
@@ -449,42 +540,40 @@ class InvoicesPage(ctk.CTkFrame):
     # إضافة صنف
     # ======================
     def add_item(self):
+        try:
+            name = self.item_name.get().strip()
+            desc = self.item_desc.get().strip()
 
-        # نفس قواعد التحقق المستخدمة في التعديل المباشر داخل الجدول
-        name, error = self._validate_cell_value("name", self.item_name.get())
+            if not name:
+                raise NumberParseError("يرجى إدخال اسم الصنف")
 
-        if error:
-            messagebox.showerror("خطأ", error)
-            self.item_name.focus_set()
-            return
+            qty = parse_number(
+                self.qty.get(),
+                "الكمية",
+                positive=True
+            )
 
-        desc, _ = self._validate_cell_value("desc", self.item_desc.get())
+            price = parse_number(
+                self.price.get(),
+                "السعر",
+                allow_zero=True
+            )
 
-        qty, error = self._validate_cell_value("qty", self.qty.get())
+            total = round_money(qty * price)
 
-        if error:
-            messagebox.showerror("خطأ", error)
-            self.qty.focus_set()
-            return
+            self.items.append({
+                "name": name,
+                "desc": desc,
+                "qty": qty,
+                "price": price,
+                "total": total
+            })
 
-        price, error = self._validate_cell_value("price", self.price.get())
+            self.clear_inputs()
+            self.refresh_items()
 
-        if error:
-            messagebox.showerror("خطأ", error)
-            self.price.focus_set()
-            return
-
-        self.items.append({
-            "name": name,
-            "desc": desc,
-            "qty": qty,
-            "price": price,
-            "total": round(qty * price, 2)
-        })
-
-        self.clear_inputs()
-        self.refresh_items()
-        self.item_name.focus_set()
+        except NumberParseError as error:
+            messagebox.showerror("خطأ", str(error))
 
     # ======================
     # تحديث جدول الأصناف
@@ -509,14 +598,83 @@ class InvoicesPage(ctk.CTkFrame):
                 values=(
                     item["name"],
                     item["desc"],
-                    item["qty"],
-                    item["price"],
-                    item["total"]
+                    format_money(item["qty"], symbol=False),
+                    format_money(item["price"], symbol=False),
+                    format_money(item["total"], symbol=False)
                 )
             )
             total += item["total"]
 
-        self.total_label.configure(text=f"الإجمالي: {total:,.2f} ₪")
+        self.refresh_invoice_summary()
+
+    # ======================
+    # قراءة الخصم والضريبة والملاحظات وحساب الإجمالي النهائي
+    # ======================
+    def get_invoice_summary(self, show_errors=False):
+
+        try:
+            discount_text = self.discount_percent_var.get().strip()
+            tax_text = self.tax_percent_var.get().strip()
+
+            discount_percent = (
+                0 if not discount_text
+                else parse_number(discount_text, "نسبة الخصم")
+            )
+
+            tax_percent = (
+                0 if not tax_text
+                else parse_number(tax_text, "نسبة الضريبة")
+            )
+
+            notes = self.notes_text.get(
+                "1.0",
+                "end-1c"
+            ).strip()
+
+            return calculate_invoice_totals(
+                self.items,
+                discount_percent=discount_percent,
+                tax_percent=tax_percent
+            ) | {"notes": notes}
+
+        except NumberParseError as error:
+            if show_errors:
+                messagebox.showerror("خطأ", str(error))
+            return None
+
+
+    # ======================
+    # تحديث الإجمالي عند تغيير الخصم أو الضريبة أو الأصناف.
+    # ======================
+    def refresh_invoice_summary(self):
+
+        if not hasattr(self, "total_label"):
+            return
+
+        summary = self.get_invoice_summary()
+
+        if summary is None:
+            self.total_label.configure(
+                text="الإجمالي النهائي: — ₪"
+            )
+            return
+
+        self.total_label.configure(
+            text=f"الإجمالي النهائي: {format_money(summary['total'])}"
+        )
+
+
+    # ======================
+    # تفريغ الخصم والضريبة والملاحظات.
+    # ======================
+    def reset_invoice_extras(self):
+
+        self.discount_percent_var.set("0")
+        self.tax_percent_var.set("0")
+
+        self.notes_text.delete("1.0", "end")
+        self.refresh_invoice_summary()
+
 
     # ======================
     # تعديل الأصناف داخل الجدول (Inline Edit)
@@ -659,25 +817,15 @@ class InvoicesPage(ctk.CTkFrame):
 
         if column == "qty":
             try:
-                qty = int(text)
-            except ValueError:
-                return None, "الكمية يجب أن تكون رقماً صحيحاً"
-
-            if qty <= 0:
-                return None, "الكمية يجب أن تكون أكبر من صفر"
-
-            return qty, None
+                return parse_number(text, "الكمية", positive=True), None
+            except NumberParseError as error:
+                return None, str(error)
 
         if column == "price":
             try:
-                price = float(text)
-            except ValueError:
-                return None, "السعر يجب أن يكون رقماً"
-
-            if not math.isfinite(price):
-                return None, "السعر يجب أن يكون رقماً"
-
-            return price, None
+                return parse_number(text, "السعر"), None
+            except NumberParseError as error:
+                return None, str(error)
 
         return None, "عمود غير قابل للتعديل"
 
@@ -720,7 +868,7 @@ class InvoicesPage(ctk.CTkFrame):
         # تطبيق القيمة وإعادة حساب إجمالي الصنف
         item = self.items[index]
         item[column] = value
-        item["total"] = round(item["qty"] * item["price"], 2)
+        item["total"] = round_money(item["qty"] * item["price"])
 
         self._destroy_cell_editor()
         self.refresh_items()
@@ -885,11 +1033,56 @@ class InvoicesPage(ctk.CTkFrame):
 
         # الإجمالي
         # ======================
+        summary = self.get_invoice_summary(show_errors=True)
+
+        if summary is None:
+            return
+
         ctk.CTkLabel(
             preview,
-            text=f"الإجمالي النهائي: {total:,.2f} ₪",
-            font=("Cairo", 18, "bold")
+            text=f"المجموع الفرعي: {format_money(summary['subtotal'])}",
+            font=("Cairo", 15)
+        ).pack()
+
+        ctk.CTkLabel(
+            preview,
+            text=(
+                f"الخصم ({summary['discount_percent']:g}%): "
+                f"{format_money(summary['discount_amount'])}"
+            ),
+            font=("Cairo", 15)
+        ).pack()
+
+        ctk.CTkLabel(
+            preview,
+            text=(
+                f"الضريبة ({summary['tax_percent']:g}%): "
+                f"{format_money(summary['tax_amount'])}"
+            ),
+            font=("Cairo", 15)
+        ).pack()
+
+        ctk.CTkLabel(
+            preview,
+            text=f"الإجمالي النهائي: {format_money(summary['total'])}",
+            font=("Cairo", 18, "bold"),
+            text_color="#2563eb"
         ).pack(pady=10)
+
+        if summary["notes"]:
+            ctk.CTkLabel(
+                preview,
+                text="📝 الملاحظات:",
+                font=("Cairo", 15, "bold")
+            ).pack()
+
+            ctk.CTkLabel(
+                preview,
+                text=summary["notes"],
+                font=("Cairo", 14),
+                wraplength=650,
+                justify="right"
+            ).pack(pady=5)
 
     
     # ======================
@@ -914,6 +1107,11 @@ class InvoicesPage(ctk.CTkFrame):
             )
             return
 
+        summary = self.get_invoice_summary(show_errors=True)
+
+        if summary is None:
+            return
+
         try:
             # تعديل فاتورة موجودة
             if self.edit_invoice_id is not None:
@@ -921,7 +1119,10 @@ class InvoicesPage(ctk.CTkFrame):
                 update_invoice(
                     self.edit_invoice_id,
                     client_id,
-                    self.items
+                    self.items,
+                    tax_percent=summary["tax_percent"],
+                    discount_percent=summary["discount_percent"],
+                    notes=summary["notes"]
                 )
 
                 message = "تم تعديل الفاتورة بنجاح"
@@ -932,7 +1133,10 @@ class InvoicesPage(ctk.CTkFrame):
                 save_invoice(
                     client_id,
                     str(date.today()),
-                    self.items
+                    self.items,
+                    tax_percent=summary["tax_percent"],
+                    discount_percent=summary["discount_percent"],
+                    notes=summary["notes"]
                 )
 
                 message = "تم حفظ الفاتورة بنجاح"
@@ -957,6 +1161,7 @@ class InvoicesPage(ctk.CTkFrame):
         self.refresh_items()
         self.clear_inputs()
         self.client_var.set("")
+        self.reset_invoice_extras()
 
         messagebox.showinfo("تم", message)
 
@@ -984,8 +1189,8 @@ class InvoicesPage(ctk.CTkFrame):
         # جلب الأصناف
         items = get_invoice_items(invoice_id)
 
-        invoice_number = invoice_info[1]
-        client_name = invoice_info[2]
+        invoice_number = invoice_info["invoice_number"]
+        client_name = invoice_info["client"]
 
         # تفعيل وضع التعديل
         self.edit_mode = True
@@ -993,6 +1198,21 @@ class InvoicesPage(ctk.CTkFrame):
 
         # تحديد العميل
         self.client_var.set(client_name)
+        self.discount_percent_var.set(
+            str(invoice_info.get("discount_percent") or 0)
+        )
+
+        self.tax_percent_var.set(
+            str(invoice_info.get("tax_percent") or 0)
+        )
+
+        self.notes_text.delete("1.0", "end")
+        self.notes_text.insert(
+            "1.0",
+            invoice_info.get("notes") or ""
+        )
+
+        self.refresh_invoice_summary()
 
         # تحديث قائمة الأصناف في الذاكرة
         self.items = []
@@ -1037,8 +1257,24 @@ class InvoicesPage(ctk.CTkFrame):
 
         items = get_invoice_items(invoice_id)
 
-        invoice_number = invoice_info[1]
-        client_name = invoice_info[2] or ""
+        invoice_number = invoice_info["invoice_number"]
+        client_name = invoice_info["client"] or ""
+
+        self.discount_percent_var.set(
+            str(invoice_info.get("discount_percent") or 0)
+        )
+
+        self.tax_percent_var.set(
+            str(invoice_info.get("tax_percent") or 0)
+        )
+
+        self.notes_text.delete("1.0", "end")
+        self.notes_text.insert(
+            "1.0",
+            invoice_info.get("notes") or ""
+        )
+
+        self.refresh_invoice_summary()
 
         # وضع الإنشاء (فاتورة جديدة وليس تعديلاً)
         self.edit_mode = False
@@ -1119,16 +1355,15 @@ class InvoicesPage(ctk.CTkFrame):
 
         client_name = self.client_var.get()
 
-        total = sum(
-            item["total"]
-            for item in self.items
-        )
+        summary = self.get_invoice_summary(show_errors=True)
 
-        # إنشاء PDF مؤقت
+        if summary is None:
+            return
+
         pdf_path = generate_temp_pdf(
             client_name,
             self.items,
-            total
+            summary
         )
 
         # فتح الملف
@@ -1153,8 +1388,8 @@ class InvoicesPage(ctk.CTkFrame):
         if not target:
             return
 
-        invoice_number = target[1]
-        client_name = target[2]
+        invoice_number = target["invoice_number"]
+        client_name = target["client"]
 
         items = get_invoice_items(invoice_id)
 
@@ -1162,7 +1397,15 @@ class InvoicesPage(ctk.CTkFrame):
             invoice_id,
             invoice_number,
             items,
-            client_name
+            client_name,
+            invoice_date=target["date"],
+            subtotal=target["subtotal"],
+            discount_percent=target["discount_percent"],
+            discount_amount=target["discount_amount"],
+            tax_percent=target["tax_percent"],
+            tax_amount=target["tax_amount"],
+            total=target["total"],
+            notes=target["notes"]
         )
 
         try:

@@ -17,6 +17,11 @@ from database import (
 
 from ui.reports_page import export_invoices_excel
 from ui.components.pdf_preview import PDFPreviewWindow 
+from ui.components.invoice_utils import (
+    NumberParseError,
+    format_money,
+    parse_number
+)
 # from theme import ENTRY_STYLE, PRIMARY_BTN, DANGER_BTN
 
 
@@ -408,6 +413,7 @@ class SavedInvoicesPage(ctk.CTkFrame):
     # تحميل الفواتير
     # ======================
     def load_invoices(self):
+        """تحميل الفواتير وتحديث الجدول والإحصائيات."""
         self.apply_filters()
 
     # ======================
@@ -418,14 +424,14 @@ class SavedInvoicesPage(ctk.CTkFrame):
         invoice_count = len(invoices)
 
         total_sales = sum(
-            float(inv[4] or 0)
-            for inv in invoices
+            float(invoice.get("total") or 0)
+            for invoice in invoices
         )
 
         clients_count = len(
             set(
-                inv[2]
-                for inv in invoices
+                invoice["client"]
+                for invoice in invoices
             )
         )
 
@@ -433,8 +439,8 @@ class SavedInvoicesPage(ctk.CTkFrame):
 
             last_invoice = max(
                 invoices,
-                key=lambda inv: inv[0]
-            )[1]
+                key=lambda invoice: invoice["id"]
+            )["invoice_number"]
 
         else:
 
@@ -510,7 +516,7 @@ class SavedInvoicesPage(ctk.CTkFrame):
         for item in self.invoice_table.get_children():
             self.invoice_table.delete(item)
 
-        for inv_id, invoice_number, client, date_, total in invoices:
+        for invoice in invoices:
 
             # التاريخ مطلوب فقط مع الفلاتر الزمنية؛ في حالة "الكل" تظهر
             # كل الفواتير حتى التي تاريخها غير صالح
@@ -519,7 +525,7 @@ class SavedInvoicesPage(ctk.CTkFrame):
             if selected_filter in ("اليوم", "الأسبوع", "الشهر", "سنة"):
                 try:
                     invoice_date = datetime.strptime(
-                        date_,
+                        invoice["date"],
                         "%Y-%m-%d"
                     )
                 except (ValueError, TypeError):
@@ -530,9 +536,9 @@ class SavedInvoicesPage(ctk.CTkFrame):
             if search_text:
 
                 if (
-                    search_text not in str(invoice_number).lower()
+                    search_text not in str(invoice["invoice_number"]).lower()
                     and
-                    search_text not in str(client).lower()
+                    search_text not in str(invoice["client"]).lower()
                 ):
                     continue
 
@@ -576,25 +582,17 @@ class SavedInvoicesPage(ctk.CTkFrame):
                     continue
             
             # إضافة النتائج المطابقة 
-            filtered_invoices.append(
-                (
-                    inv_id,
-                    invoice_number,
-                    client,
-                    date_,
-                    total
-                )
-            )
+            filtered_invoices.append(invoice)
 
             self.invoice_table.insert(
                 "",
                 "end",
-                iid=str(inv_id),
+                iid=str(invoice["id"]),
                 values=(
-                    invoice_number,
-                    client,
-                    date_,
-                    total
+                    invoice["invoice_number"],
+                    invoice["client"],
+                    invoice["date"],
+                    format_money(invoice["total"])
                 )
             )
         self.renumber_rows()
@@ -698,7 +696,7 @@ class SavedInvoicesPage(ctk.CTkFrame):
     # ======================
     # فرز الجدول
     # ======================
-    def sort_table(self, column):
+    def sort_table(self, value, column):
 
         data = []
 
@@ -724,17 +722,18 @@ class SavedInvoicesPage(ctk.CTkFrame):
             )
 
         try:
-            data.sort(
-                key=lambda x: float(x[0]),
-                reverse=self.sort_reverse
+            number = parse_number(
+                value,
+                "قيمة الفرز"
             )
+            return (0, number, "")
+        except NumberParseError:
+            return (1, 0.0, str(value).lower())
 
-        except ValueError:
-
-            data.sort(
-                key=lambda x: str(x[0]).lower(),
-                reverse=self.sort_reverse
-            )
+        data.sort(
+            key=lambda x: sort_key(x[0]),
+            reverse=self.sort_reverse
+        )
 
         for index, (_, item) in enumerate(data):
 
@@ -804,15 +803,15 @@ class SavedInvoicesPage(ctk.CTkFrame):
 
         for inv in invoices:
 
-            if inv[0] == invoice_id:
+            if inv["id"] == invoice_id:
                 target = inv
                 break
 
         if not target:
             return
 
-        invoice_number = target[1]
-        client_name = target[2]
+        invoice_number = target["invoice_number"]
+        client_name = target["client"]
 
         items = get_invoice_items(invoice_id)
 
@@ -820,7 +819,15 @@ class SavedInvoicesPage(ctk.CTkFrame):
             invoice_id,
             invoice_number,
             items,
-            client_name
+            client_name,
+            invoice_date=target["date"],
+            subtotal=target["subtotal"],
+            discount_percent=target["discount_percent"],
+            discount_amount=target["discount_amount"],
+            tax_percent=target["tax_percent"],
+            tax_amount=target["tax_amount"],
+            total=target["total"],
+            notes=target["notes"]
         )
 
         os.startfile(file_name)
@@ -850,15 +857,15 @@ class SavedInvoicesPage(ctk.CTkFrame):
 
         for inv in invoices:
 
-            if inv[0] == invoice_id:
+            if inv["id"] == invoice_id:
                 target = inv
                 break
 
         if not target:
             return
 
-        invoice_number = target[1]
-        client_name = target[2]
+        invoice_number = target["invoice_number"]
+        client_name = target["client"]
 
         items = get_invoice_items(invoice_id)
 
@@ -866,7 +873,15 @@ class SavedInvoicesPage(ctk.CTkFrame):
             invoice_id,
             invoice_number,
             items,
-            client_name
+            client_name,
+            invoice_date=target["date"],
+            subtotal=target["subtotal"],
+            discount_percent=target["discount_percent"],
+            discount_amount=target["discount_amount"],
+            tax_percent=target["tax_percent"],
+            tax_amount=target["tax_amount"],
+            total=target["total"],
+            notes=target["notes"]
         )
 
         PDFPreviewWindow(self, file_name)
@@ -957,33 +972,23 @@ class SavedInvoicesPage(ctk.CTkFrame):
         selected = self.invoice_table.selection()
 
         if not selected:
-
             messagebox.showwarning(
                 "تنبيه",
                 "يرجى تحديد فاتورة واحدة على الأقل"
             )
-
             return
 
-        invoices = []
+        invoices_by_id = {
+            invoice["id"]: invoice
+            for invoice in db_get_invoices()
+        }
 
-        for item in selected:
+        selected_invoices = [
+            invoices_by_id[int(item)]
+            for item in selected
+            if int(item) in invoices_by_id
+        ]
 
-            values = self.invoice_table.item(
-                item,
-                "values"
-            )
-
-            invoices.append(
-                (
-                    int(item),      # ID
-                    values[0],      # رقم الفاتورة
-                    values[1],      # العميل
-                    values[2],      # التاريخ
-                    values[3]       # الإجمالي
-                )
-            )
-
-        export_invoices_excel(invoices)
+        export_invoices_excel(selected_invoices)
 
         

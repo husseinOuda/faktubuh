@@ -39,6 +39,46 @@ def db_connection():
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
+# تقريب قيم مالية محفوظة في قاعدة البيانات.
+# ======================
+def _money(value):
+    return round(float(value or 0), 2)
+
+# حساب إجمالي الفاتورة بعد الخصم والضريبة
+# ======================
+def _calculate_invoice_totals(items, discount_percent=0, tax_percent=0):
+
+    subtotal = _money(
+        sum(float(item.get("total", 0)) for item in items)
+    )
+
+    discount_percent = _money(discount_percent)
+    tax_percent = _money(tax_percent)
+
+    discount_amount = _money(
+        subtotal * discount_percent / 100
+    )
+
+    taxable_amount = _money(
+        subtotal - discount_amount
+    )
+
+    tax_amount = _money(
+        taxable_amount * tax_percent / 100
+    )
+
+    total = _money(
+        taxable_amount + tax_amount
+    )
+
+    return {
+        "subtotal": subtotal,
+        "discount_percent": discount_percent,
+        "discount_amount": discount_amount,
+        "tax_percent": tax_percent,
+        "tax_amount": tax_amount,
+        "total": total,
+    }
 
 # ======================
 # إنشاء الجداول
@@ -72,9 +112,15 @@ def create_tables():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         client_id INTEGER,
         items TEXT,
-        total REAL,
+        subtotal REAL DEFAULT 0,
+        discount_percent REAL DEFAULT 0,
+        discount_amount REAL DEFAULT 0,
+        tax_percent REAL DEFAULT 0,
+        tax_amount REAL DEFAULT 0,
+        total REAL DEFAULT 0,
         date TEXT,
         invoice_number TEXT,
+        notes TEXT DEFAULT '',
         FOREIGN KEY(client_id) REFERENCES clients(id)
     )
     """)
@@ -85,7 +131,7 @@ def create_tables():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         invoice_id INTEGER,
         item_name TEXT,
-        quantity INTEGER,
+        quantity REAL,
         price REAL,
         total REAL,
         description TEXT,
@@ -195,21 +241,45 @@ def get_invoice_info(invoice_id):
         SELECT
             invoices.id,
             invoices.invoice_number,
-            clients.name
+            clients.name,
+            invoices.date,
+            invoices.subtotal,
+            invoices.discount_percent,
+            invoices.discount_amount,
+            invoices.tax_percent,
+            invoices.tax_amount,
+            invoices.total,
+            invoices.notes
 
         FROM invoices
 
         LEFT JOIN clients
         ON invoices.client_id = clients.id
 
-        WHERE invoices.id=?
+        WHERE invoices.id = ?
     """, (invoice_id,))
 
     data = cursor.fetchone()
-
     conn.close()
 
-    return data
+    if not data:
+        return None
+
+    keys = (
+        "id",
+        "invoice_number",
+        "client",
+        "date",
+        "subtotal",
+        "discount_percent",
+        "discount_amount",
+        "tax_percent",
+        "tax_amount",
+        "total",
+        "notes",
+    )
+
+    return dict(zip(keys, data))
 
 # 🔍 البحث عن العملاء
 # ======================
@@ -282,10 +352,13 @@ def delete_client(client_id):
 # ======================
 
 # ➕ إضافة فاتورة
-def save_invoice(client_id, date, items):
-    total = sum(item['total'] for item in items)
+def save_invoice(client_id, date, items, tax_percent=0, discount_percent=0, notes=""):
+    totals = _calculate_invoice_totals(
+        items,
+        discount_percent=discount_percent,
+        tax_percent=tax_percent
+    )
 
-    # إنشاء رقم فاتورة
     invoice_number = generate_invoice_number()
 
     with db_connection() as conn:
@@ -293,15 +366,31 @@ def save_invoice(client_id, date, items):
 
         cursor.execute(
             """
-            INSERT INTO invoices
-            (client_id, total, date, invoice_number)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO invoices (
+                client_id,
+                subtotal,
+                discount_percent,
+                discount_amount,
+                tax_percent,
+                tax_amount,
+                total,
+                date,
+                invoice_number,
+                notes
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 client_id,
-                total,
+                totals["subtotal"],
+                totals["discount_percent"],
+                totals["discount_amount"],
+                totals["tax_percent"],
+                totals["tax_amount"],
+                totals["total"],
                 date,
-                invoice_number
+                invoice_number,
+                notes or ""
             )
         )
 
@@ -314,18 +403,19 @@ def save_invoice(client_id, date, items):
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (
                 invoice_id,
-                item['name'],
-                item.get('desc', ''),
-                item['qty'],
-                item['price'],
-                item['total']
+                item["name"],
+                item.get("desc", ""),
+                item["qty"],
+                item["price"],
+                item["total"]
             ))
+
+    return invoice_id
 
 # ======================
 # 📋 جلب الفواتير
 # ======================
 def get_invoices():
-
     conn = connect()
     cursor = conn.cursor()
 
@@ -335,7 +425,13 @@ def get_invoices():
             invoices.invoice_number,
             clients.name,
             invoices.date,
-            invoices.total
+            invoices.subtotal,
+            invoices.discount_percent,
+            invoices.discount_amount,
+            invoices.tax_percent,
+            invoices.tax_amount,
+            invoices.total,
+            invoices.notes
 
         FROM invoices
 
@@ -345,11 +441,24 @@ def get_invoices():
         ORDER BY invoices.id DESC
     """)
 
-    data = cursor.fetchall()
-
+    rows = cursor.fetchall()
     conn.close()
 
-    return data
+    keys = (
+        "id",
+        "invoice_number",
+        "client",
+        "date",
+        "subtotal",
+        "discount_percent",
+        "discount_amount",
+        "tax_percent",
+        "tax_amount",
+        "total",
+        "notes",
+    )
+
+    return [dict(zip(keys, row)) for row in rows]
 
 # جلب الفاتورة حسب الرقم 
 # ======================
@@ -409,8 +518,12 @@ def delete_invoice(invoice_id):
 
 # ✏️ تعديل فاتورة
 # ======================
-def update_invoice(invoice_id, client_id, items):
-    total = sum(item['total'] for item in items)
+def update_invoice(invoice_id, client_id, items, tax_percent=0, discount_percent=0, notes=""):
+    totals = _calculate_invoice_totals(
+        items,
+        discount_percent=discount_percent,
+        tax_percent=tax_percent
+    )
 
     with db_connection() as conn:
         cursor = conn.cursor()
@@ -418,19 +531,35 @@ def update_invoice(invoice_id, client_id, items):
         cursor.execute(
             """
             UPDATE invoices
-            SET client_id=?, total=?
+            SET
+                client_id=?,
+                subtotal=?,
+                discount_percent=?,
+                discount_amount=?,
+                tax_percent=?,
+                tax_amount=?,
+                total=?,
+                notes=?
             WHERE id=?
             """,
-            (client_id, total, invoice_id)
+            (
+                client_id,
+                totals["subtotal"],
+                totals["discount_percent"],
+                totals["discount_amount"],
+                totals["tax_percent"],
+                totals["tax_amount"],
+                totals["total"],
+                notes or "",
+                invoice_id
+            )
         )
 
-        # حذف الأصناف القديمة
         cursor.execute(
             "DELETE FROM invoice_items WHERE invoice_id=?",
             (invoice_id,)
         )
 
-        # إعادة إدخال الأصناف الجديدة
         for item in items:
             cursor.execute(
                 """
@@ -440,13 +569,15 @@ def update_invoice(invoice_id, client_id, items):
                 """,
                 (
                     invoice_id,
-                    item['name'],
-                    item.get('desc', ''),
-                    item['qty'],
-                    item['price'],
-                    item['total']
+                    item["name"],
+                    item.get("desc", ""),
+                    item["qty"],
+                    item["price"],
+                    item["total"]
                 )
             )
+
+
 
 
 # ======================
@@ -546,7 +677,25 @@ def migrate_database():
         _add_column_if_missing(cursor, "clients", "phone", "TEXT")
         _add_column_if_missing(cursor, "invoices", "items", "TEXT")
         _add_column_if_missing(cursor, "invoices", "invoice_number", "TEXT")
+        _add_column_if_missing(cursor, "invoices", "subtotal", "REAL DEFAULT 0")
+        _add_column_if_missing(cursor, "invoices", "discount_percent", "REAL DEFAULT 0")
+        _add_column_if_missing(cursor, "invoices", "discount_amount", "REAL DEFAULT 0")
+        _add_column_if_missing(cursor, "invoices", "tax_percent", "REAL DEFAULT 0")
+        _add_column_if_missing(cursor, "invoices", "tax_amount", "REAL DEFAULT 0")
+        _add_column_if_missing(cursor, "invoices", "notes", "TEXT DEFAULT ''")
         _add_column_if_missing(cursor, "invoice_items", "description", "TEXT")
+
+        # تحديث الفواتير القديمة
+        cursor.execute("""
+            UPDATE invoices
+            SET
+                subtotal = COALESCE(subtotal, total),
+                discount_percent = COALESCE(discount_percent, 0),
+                discount_amount = COALESCE(discount_amount, 0),
+                tax_percent = COALESCE(tax_percent, 0),
+                tax_amount = COALESCE(tax_amount, 0),
+                notes = COALESCE(notes, '')
+        """)
 
         # منع تكرار أسماء العملاء في القواعد القديمة
         if not _clients_name_is_unique(cursor):

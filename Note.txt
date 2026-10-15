@@ -31,6 +31,7 @@ invoice_system/
 │   │   ├── cards.py
 │   │   ├── buttons.py
 │   │   ├── tables.py
+│   │   ├── invoice_utils.py
 │   │   └── pdf_preview.py
 │
 ├── assets/
