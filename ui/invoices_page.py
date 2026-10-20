@@ -24,9 +24,8 @@ from database import (
     update_invoice
 )
 
-from theme import ENTRY_STYLE, PRIMARY_BTN, DANGER_BTN
+from theme import ENTRY_STYLE, PRIMARY_BTN
 
-from ui.reports_page import export_invoices_excel
 from ui.components.invoice_utils import (
     NumberParseError,
     calculate_invoice_totals,
@@ -40,6 +39,12 @@ class InvoicesPage(ctk.CTkFrame):
         super().__init__(parent)
         
         self.app = app
+
+        # توزيع الشاشة: Header + المحتوى + شريط الإجراءات السفلي
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=0)
+        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=0, minsize=76)
 
         self.items = []
         self.edit_mode = False
@@ -59,7 +64,7 @@ class InvoicesPage(ctk.CTkFrame):
             self,
             fg_color="transparent"
         )
-        header.pack(fill="x", padx=20, pady=20)
+        header.grid(row=0, column=0, sticky="ew", padx=20, pady=(20, 10))
 
         ctk.CTkLabel(
             header,
@@ -81,26 +86,21 @@ class InvoicesPage(ctk.CTkFrame):
             self,
             fg_color="transparent"
         )
-        content_frame.pack(
-            fill="both",
-            expand=True,
+        content_frame.grid(
+            row=1,
+            column=0,
+            sticky="nsew",
             padx=15,
-            pady=10
+            pady=(0, 10)
         )
 
-        content_frame.grid_columnconfigure(
-            0,
-            weight=1
-        )
+        content_frame.grid_columnconfigure(0, weight=1)
 
-        content_frame.grid_columnconfigure(
-            1,
-            weight=2
-        )
+        content_frame.grid_columnconfigure(1, weight=2)
 
-        left_panel = ctk.CTkFrame(
-            content_frame
-        )
+        content_frame.grid_rowconfigure(0, weight=1)
+
+        left_panel = ctk.CTkScrollableFrame(content_frame)
         left_panel.grid(
             row=0,
             column=0,
@@ -116,9 +116,6 @@ class InvoicesPage(ctk.CTkFrame):
             column=1,
             sticky="nsew"
         )
-
-        left_panel.grid_rowconfigure(0, weight=1)
-        right_panel.grid_rowconfigure(0, weight=1)
 
         # ======================
         # العملاء
@@ -191,22 +188,21 @@ class InvoicesPage(ctk.CTkFrame):
         form_frame.grid_columnconfigure(0, weight=1)
         form_frame.grid_columnconfigure(1, weight=1)
 
-
         # ======================
         # الخصم والضريبة والملاحظات
         # ======================
-        summary_frame = ctk.CTkFrame(left_panel)
-        summary_frame.pack(
+        settings_frame = ctk.CTkFrame(left_panel)
+        settings_frame.pack(
             fill="x",
-            padx=15,
+            padx=10,
             pady=(0, 10)
         )
 
-        summary_frame.grid_columnconfigure(0, weight=1)
-        summary_frame.grid_columnconfigure(1, weight=1)
+        settings_frame.grid_columnconfigure(0, weight=1)
+        settings_frame.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(
-            summary_frame,
+            settings_frame,
             text="💰 الخصم والضريبة والملاحظات",
             font=("Cairo", 15, "bold")
         ).grid(
@@ -219,7 +215,7 @@ class InvoicesPage(ctk.CTkFrame):
         )
 
         self.discount_entry = ctk.CTkEntry(
-            summary_frame,
+            settings_frame,
             textvariable=self.discount_percent_var,
             placeholder_text="الخصم %",
             **ENTRY_STYLE
@@ -233,7 +229,7 @@ class InvoicesPage(ctk.CTkFrame):
         )
 
         self.tax_entry = ctk.CTkEntry(
-            summary_frame,
+            settings_frame,
             textvariable=self.tax_percent_var,
             placeholder_text="الضريبة %",
             **ENTRY_STYLE
@@ -246,13 +242,14 @@ class InvoicesPage(ctk.CTkFrame):
             sticky="ew"
         )
 
-        self.notes_text = ctk.CTkTextbox(
-            summary_frame,
-            height=90,
-            wrap="word",
-            font=("Cairo", 13)
+        self.notes_entry = ctk.CTkEntry(
+            settings_frame,
+            placeholder_text="📝 ملاحظات الفاتورة - اختياري",
+            height=45,
+            corner_radius=10,
+            font=("Cairo", 14)
         )
-        self.notes_text.grid(
+        self.notes_entry.grid(
             row=2,
             column=0,
             columnspan=2,
@@ -260,7 +257,6 @@ class InvoicesPage(ctk.CTkFrame):
             pady=5,
             sticky="ew"
         )
-        self.notes_text.insert("1.0", "")
 
         self.discount_percent_var.trace_add(
             "write",
@@ -375,8 +371,71 @@ class InvoicesPage(ctk.CTkFrame):
             pady=10
         )
 
+        # شريط أدوات الأصناف
+        items_toolbar = ctk.CTkFrame(
+            right_panel,
+            fg_color="transparent"
+        )
+        items_toolbar.pack(
+            fill="x",
+            padx=10,
+            pady=(0, 5)
+        )
+
+        ctk.CTkLabel(
+            items_toolbar,
+            text="Double Click أو F2 للتعديل",
+            font=("Cairo", 12),
+            text_color="#6b7280"
+        ).pack(
+            side="left",
+            padx=5
+        )
+
+        ctk.CTkButton(
+            items_toolbar,
+            text="✏️ تعديل",
+            width=85,
+            height=32,
+            corner_radius=8,
+            font=("Cairo", 12, "bold"),
+            fg_color="#2563eb",
+            hover_color="#1d4ed8",
+            command=self.edit_selected_item
+        ).pack(
+            side="right",
+            padx=3
+        )
+
+        ctk.CTkButton(
+            items_toolbar,
+            text="🗑 حذف",
+            width=85,
+            height=32,
+            corner_radius=8,
+            font=("Cairo", 12, "bold"),
+            fg_color="#dc2626",
+            hover_color="#b91c1c",
+            command=self.delete_selected_item
+        ).pack(
+            side="right",
+            padx=3
+        )
+
+        # حاوية الجدول مع Scrollbar
+        items_container = ctk.CTkFrame(right_panel)
+        items_container.pack(
+            fill="both",
+            expand=True,
+            padx=10,
+            pady=(0, 5)
+        )
+
+        items_container.grid_rowconfigure(0, weight=1)
+        items_container.grid_columnconfigure(0, weight=1)
+
         self.items_table = ttk.Treeview(
-            table_frame,
+            items_container,
             columns=(
                 "name",
                 "desc",
@@ -385,7 +444,29 @@ class InvoicesPage(ctk.CTkFrame):
                 "total"
             ),
             show="headings",
-            height=8
+            height=10,
+            selectmode="extended"
+        )
+
+        self.items_table.grid(
+            row=0,
+            column=0,
+            sticky="nsew"
+        )
+
+        self.items_scroll = ttk.Scrollbar(
+            items_container,
+            orient="vertical",
+            command=self.items_table.yview
+        )
+        self.items_scroll.grid(
+            row=0,
+            column=1,
+            sticky="ns"
+        )
+
+        self.items_table.configure(
+            yscrollcommand=self.items_scroll.set
         )
 
         self.items_table.heading(
@@ -422,7 +503,7 @@ class InvoicesPage(ctk.CTkFrame):
         self.items_table.configure(yscrollcommand=items_scroll.set)
 
         items_scroll.pack(side="right", fill="y")
-        self.items_table.pack(side="left", fill="both", expand=True)
+        
 
         # تعديل الصنف مباشرة داخل الجدول
         # ======================
@@ -431,25 +512,81 @@ class InvoicesPage(ctk.CTkFrame):
         self.items_table.bind("<Delete>", self.delete_selected_item)
         self.items_table.bind("<MouseWheel>", self.on_items_table_scroll, add="+")
 
-        # زر حذف الصنف
         # ======================
-        ctk.CTkButton(
+        # ملخص الفاتورة 
+        # ======================
+        totals_frame = ctk.CTkFrame(
             right_panel,
-            text="🗑 حذف الصنف",
-            command=self.delete_selected_item,
-            **DANGER_BTN
-        ).pack(pady=(0, 5))
-
-        # ======================
-        # الإجمالي
-        # ======================
-        self.total_label = ctk.CTkLabel(
-            right_panel,
-            text="الإجمالي: 0.00 ₪",
-            font=("Cairo", 18, "bold"),
-            text_color="#2563eb"
+            fg_color="transparent"
         )
-        self.total_label.pack(pady=10)
+        totals_frame.pack(
+            fill="x",
+            padx=10,
+            pady=(5, 10)
+        )
+
+        for column in range(4):
+            totals_frame.grid_columnconfigure(
+                column,
+                weight=1
+            )
+
+        self.subtotal_label = ctk.CTkLabel(
+            totals_frame,
+            text="المجموع: 0.00 ₪",
+            font=("Cairo", 13, "bold"),
+            justify="right"
+        )
+        self.subtotal_label.grid(
+            row=0,
+            column=0,
+            padx=5,
+            pady=5,
+            sticky="ew"
+        )
+
+        self.discount_label = ctk.CTkLabel(
+            totals_frame,
+            text="الخصم: 0.00 ₪",
+            font=("Cairo", 13, "bold"),
+            justify="right"
+        )
+        self.discount_label.grid(
+            row=0,
+            column=1,
+            padx=5,
+            pady=5,
+            sticky="ew"
+        )
+
+        self.tax_label = ctk.CTkLabel(
+            totals_frame,
+            text="الضريبة: 0.00 ₪",
+            font=("Cairo", 13, "bold"),
+            justify="right"
+        )
+        self.tax_label.grid(
+            row=0,
+            column=2,
+            padx=5,
+            pady=5,
+            sticky="ew"
+        )
+
+        self.total_label = ctk.CTkLabel(
+            totals_frame,
+            text="الإجمالي: 0.00 ₪",
+            font=("Cairo", 16, "bold"),
+            text_color="#2563eb",
+            justify="right"
+        )
+        self.total_label.grid(
+            row=0,
+            column=3,
+            padx=5,
+            pady=5,
+            sticky="ew"
+        )
 
         # ======================
         # تحسين عرض الجدول 
@@ -485,69 +622,95 @@ class InvoicesPage(ctk.CTkFrame):
         )
 
         # ======================
-        # أزرار
+        # شريط الأزرار السفلي الثابت
         # ======================
-        buttons_frame = ctk.CTkFrame(
-            left_panel,
+        SECONDARY_BTN = {
+            "fg_color": "#f3f4f6",
+            "hover_color": "#e5e7eb",
+            "height": 45,
+            "corner_radius": 10,
+            "font": ("Cairo", 14, "bold"),
+            "text_color": "#111827"
+        }
+
+        actions_bar = ctk.CTkFrame(
+            self,
+            fg_color="#ffffff",
+            corner_radius=0,
+            border_width=1,
+            border_color="#e5e7eb",
+            height=76
+        )
+        actions_bar.grid(
+            row=2,
+            column=0,
+            sticky="ew"
+        )
+        actions_bar.grid_propagate(False)
+
+        actions_inner = ctk.CTkFrame(
+            actions_bar,
             fg_color="transparent"
         )
-        buttons_frame.pack(
-            fill="x",
-            padx=10,
+        actions_inner.pack(
+            side="right",
+            padx=15,
             pady=15
         )
-        buttons_frame.grid_columnconfigure(0, weight=1)
-        buttons_frame.grid_columnconfigure(1, weight=1)
 
         self.save_btn = ctk.CTkButton(
-            buttons_frame,
+            actions_inner,
             text="💾 حفظ الفاتورة",
+            width=165,
             command=self.save_invoice,
             **PRIMARY_BTN
         )
-        self.save_btn.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+        self.save_btn.pack(
+            side="right",
+            padx=5
+        )
 
         ctk.CTkButton(
-            buttons_frame,
-            text="🖨️ معاينة وطباعة",
-            command=self.preview_and_print,
-            **PRIMARY_BTN
-        ).grid(row=1, column=0, padx=5, pady=5, sticky="ew")
-
-        ctk.CTkButton(
-            buttons_frame,
-            text="👁️ معاينة الفاتورة",
+            actions_inner,
+            text="👁️ معاينة",
+            width=135,
             command=self.preview_invoice,
-            **PRIMARY_BTN
-        ).grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        
-        ctk.CTkButton(
-            buttons_frame, 
-            text="📊 تصدير Excel", 
-            command=export_invoices_excel, 
-            **PRIMARY_BTN
-        ).grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+            **SECONDARY_BTN
+        ).pack(
+            side="right",
+            padx=5
+        )
 
-        # زر إلغاء التعديل (يظهر فقط في وضع التعديل)
+        self.print_btn = ctk.CTkButton(
+            actions_inner,
+            text="🖨️ طباعة",
+            width=135,
+            command=self.preview_and_print,
+            **SECONDARY_BTN
+        )
+        self.print_btn.pack(
+            side="right",
+            padx=5
+        )
+
         self.cancel_edit_btn = ctk.CTkButton(
-            buttons_frame,
+            actions_inner,
             text="✖ إلغاء التعديل",
-            command=self.cancel_edit,
-            fg_color="#6b7280",
-            hover_color="#4b5563",
+            width=150,
             height=45,
             corner_radius=10,
-            font=("Cairo", 14, "bold")
+            font=("Cairo", 14, "bold"),
+            fg_color="#6b7280",
+            hover_color="#4b5563",
+            command=self.cancel_edit
         )
-        self.cancel_edit_btn.grid(
-            row=2,
-            column=0,
-            columnspan=2,
-            padx=5,
-            pady=5,
-            sticky="ew"
+        self.cancel_edit_btn.pack(
+            side="left",
+            padx=5
         )
-        self.cancel_edit_btn.grid_remove()
+
+        # زر إلغاء التعديل مخفي افتراضياً
+        self.cancel_edit_btn.pack_forget()
 
     # ======================
     # Enter داخل حقول إدخال الصنف
@@ -673,10 +836,7 @@ class InvoicesPage(ctk.CTkFrame):
                 else parse_number(tax_text, "نسبة الضريبة")
             )
 
-            notes = self.notes_text.get(
-                "1.0",
-                "end-1c"
-            ).strip()
+            notes = self.notes_entry.get().strip()
 
             return calculate_invoice_totals(
                 self.items,
@@ -691,7 +851,7 @@ class InvoicesPage(ctk.CTkFrame):
 
 
     # ======================
-    # تحديث الإجمالي عند تغيير الخصم أو الضريبة أو الأصناف.
+    # تحديث ملخص الفاتورة عند تغيير الأصناف أو الخصم أو الضريبة.
     # ======================
     def refresh_invoice_summary(self):
 
@@ -701,13 +861,26 @@ class InvoicesPage(ctk.CTkFrame):
         summary = self.get_invoice_summary()
 
         if summary is None:
-            self.total_label.configure(
-                text="الإجمالي النهائي: — ₪"
-            )
+            self.subtotal_label.configure(text="المجموع: —")
+            self.discount_label.configure(text="الخصم: —")
+            self.tax_label.configure(text="الضريبة: —")
+            self.total_label.configure(text="الإجمالي: —")
             return
 
+        self.subtotal_label.configure(
+            text=f"المجموع: {format_money(summary['subtotal'])}"
+        )
+
+        self.discount_label.configure(
+            text=f"الخصم: {format_money(summary['discount_amount'])}"
+        )
+
+        self.tax_label.configure(
+            text=f"الضريبة: {format_money(summary['tax_amount'])}"
+        )
+
         self.total_label.configure(
-            text=f"الإجمالي النهائي: {format_money(summary['total'])}"
+            text=f"الإجمالي: {format_money(summary['total'])}"
         )
 
 
@@ -719,7 +892,7 @@ class InvoicesPage(ctk.CTkFrame):
         self.discount_percent_var.set("0")
         self.tax_percent_var.set("0")
 
-        self.notes_text.delete("1.0", "end")
+        self.notes_entry.delete(0, "end")
         self.refresh_invoice_summary()
 
 
@@ -944,6 +1117,37 @@ class InvoicesPage(ctk.CTkFrame):
     def remove_item(self, index):
         self.items.pop(index)
         self.refresh_items()
+
+    # ======================
+    # فتح تعديل أول خلية في الصنف المحدد
+    # ======================
+    def edit_selected_item(self, event=None):
+
+        selected = self.items_table.selection()
+
+        if not selected:
+            messagebox.showwarning(
+                "تنبيه",
+                "يرجى تحديد صنف أولاً"
+            )
+            return "break"
+
+        # حفظ أي محرر مفتوح قبل فتح محرر جديد
+        if not self._finish_cell_edit(
+            commit=True,
+            show_error=True
+        ):
+            return "break"
+
+        row_id = selected[0]
+
+        if self.items_table.exists(row_id):
+            self._start_cell_edit(
+                row_id,
+                self.EDITABLE_COLUMNS[0]
+            )
+
+        return "break"
 
     # ======================
     # حذف الأصناف المحددة من الجدول
@@ -1253,9 +1457,9 @@ class InvoicesPage(ctk.CTkFrame):
             str(invoice_info.get("tax_percent") or 0)
         )
 
-        self.notes_text.delete("1.0", "end")
-        self.notes_text.insert(
-            "1.0",
+        self.notes_entry.delete(0, "end")
+        self.notes_entry.insert(
+            0,
             invoice_info.get("notes") or ""
         )
 
@@ -1315,9 +1519,9 @@ class InvoicesPage(ctk.CTkFrame):
             str(invoice_info.get("tax_percent") or 0)
         )
 
-        self.notes_text.delete("1.0", "end")
-        self.notes_text.insert(
-            "1.0",
+        self.notes_entry.delete(0, "end")
+        self.notes_entry.insert(
+            0,
             invoice_info.get("notes") or ""
         )
 
@@ -1357,14 +1561,17 @@ class InvoicesPage(ctk.CTkFrame):
         )
 
     # ======================
-    # إظهار / إخفاء زر إلغاء التعديل
+    # إظهار أو إخفاء زر إلغاء التعديل في الشريط السفلي
     # ======================
     def set_cancel_button_visible(self, visible):
 
         if visible:
-            self.cancel_edit_btn.grid()
+            self.cancel_edit_btn.pack(
+                side="left",
+                padx=5
+            )
         else:
-            self.cancel_edit_btn.grid_remove()
+            self.cancel_edit_btn.pack_forget()
 
     # ======================
     # إلغاء تعديل الفاتورة والعودة للقائمة
