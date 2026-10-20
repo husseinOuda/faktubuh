@@ -327,6 +327,19 @@ class InvoicesPage(ctk.CTkFrame):
             sticky="ew"
         )
 
+        # Enter في أي حقل: ينتقل للحقل التالي، وعند اكتمال البيانات يضيف الصنف
+        for index, entry in enumerate(
+            (self.item_name, self.item_desc, self.qty, self.price)
+        ):
+            entry.bind(
+                "<Return>",
+                lambda e, i=index: self.on_item_form_enter(i)
+            )
+            entry.bind(
+                "<KP_Enter>",
+                lambda e, i=index: self.on_item_form_enter(i)
+            )
+
         ctk.CTkButton(
             form_frame,
             text="➕ إضافة صنف",
@@ -536,6 +549,40 @@ class InvoicesPage(ctk.CTkFrame):
         )
         self.cancel_edit_btn.grid_remove()
 
+    # ======================
+    # Enter داخل حقول إدخال الصنف
+    # ======================
+    def on_item_form_enter(self, index):
+
+        fields = [self.item_name, self.item_desc, self.qty, self.price]
+        required = [self.item_name, self.qty, self.price]
+
+        # الحقول الإلزامية (الاسم والكمية والسعر) معبأة → أضف الصنف
+        if all(field.get().strip() for field in required):
+
+            count_before = len(self.items)
+
+            self.add_item()
+
+            # بعد نجاح الإضافة نعود لحقل الاسم لإدخال الصنف التالي
+            if len(self.items) > count_before:
+                self.item_name.focus_set()
+
+            return "break"
+
+        # وإلا ننتقل إلى الحقل التالي (ومن السعر إلى أول حقل إلزامي فارغ)
+        if index < len(fields) - 1:
+            target = fields[index + 1]
+        else:
+            target = next(
+                field for field in required
+                if not field.get().strip()
+            )
+
+        target.focus_set()
+
+        return "break"
+    
     # ======================
     # إضافة صنف
     # ======================
