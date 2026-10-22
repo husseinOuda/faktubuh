@@ -361,16 +361,6 @@ class InvoicesPage(ctk.CTkFrame):
             pady=(10,5)
         )
 
-        table_frame = ctk.CTkFrame(
-            right_panel,
-            fg_color="transparent"
-        )
-        table_frame.pack(
-            fill="x",
-            padx=10,
-            pady=10
-        )
-
         # شريط أدوات الأصناف
         items_toolbar = ctk.CTkFrame(
             right_panel,
@@ -422,6 +412,83 @@ class InvoicesPage(ctk.CTkFrame):
             padx=3
         )
 
+        # ======================
+        # ملخص الفاتورة 
+        # ======================
+        totals_frame = ctk.CTkFrame(
+            right_panel,
+            fg_color="transparent"
+        )
+        totals_frame.pack(
+            side="bottom",
+            fill="x",
+            padx=10,
+            pady=(5, 10)
+        )
+
+        for column in range(4):
+            totals_frame.grid_columnconfigure(
+                column,
+                weight=1
+            )
+
+        self.subtotal_label = ctk.CTkLabel(
+            totals_frame,
+            text="المجموع: 0.00 ₪",
+            font=("Cairo", 13, "bold"),
+            justify="right"
+        )
+        self.subtotal_label.grid(
+            row=0,
+            column=0,
+            padx=5,
+            pady=5,
+            sticky="ew"
+        )
+
+        self.discount_label = ctk.CTkLabel(
+            totals_frame,
+            text="الخصم: 0.00 ₪",
+            font=("Cairo", 13, "bold"),
+            justify="right"
+        )
+        self.discount_label.grid(
+            row=0,
+            column=1,
+            padx=5,
+            pady=5,
+            sticky="ew"
+        )
+
+        self.tax_label = ctk.CTkLabel(
+            totals_frame,
+            text="الضريبة: 0.00 ₪",
+            font=("Cairo", 13, "bold"),
+            justify="right"
+        )
+        self.tax_label.grid(
+            row=0,
+            column=2,
+            padx=5,
+            pady=5,
+            sticky="ew"
+        )
+
+        self.total_label = ctk.CTkLabel(
+            totals_frame,
+            text="الإجمالي: 0.00 ₪",
+            font=("Cairo", 16, "bold"),
+            text_color="#2563eb",
+            justify="right"
+        )
+        self.total_label.grid(
+            row=0,
+            column=3,
+            padx=5,
+            pady=5,
+            sticky="ew"
+        )
+        
         # حاوية الجدول مع Scrollbar
         items_container = ctk.CTkFrame(right_panel)
         items_container.pack(
@@ -493,16 +560,6 @@ class InvoicesPage(ctk.CTkFrame):
             "total",
             text="الإجمالي"
         )
-
-        # شريط التمرير
-        items_scroll = ttk.Scrollbar(
-            table_frame,
-            orient="vertical",
-            command=self._on_items_scroll
-        )
-        self.items_table.configure(yscrollcommand=items_scroll.set)
-
-        items_scroll.pack(side="right", fill="y")
         
 
         # تعديل الصنف مباشرة داخل الجدول
@@ -511,82 +568,6 @@ class InvoicesPage(ctk.CTkFrame):
         self.items_table.bind("<F2>", self.on_item_f2)
         self.items_table.bind("<Delete>", self.delete_selected_item)
         self.items_table.bind("<MouseWheel>", self.on_items_table_scroll, add="+")
-
-        # ======================
-        # ملخص الفاتورة 
-        # ======================
-        totals_frame = ctk.CTkFrame(
-            right_panel,
-            fg_color="transparent"
-        )
-        totals_frame.pack(
-            fill="x",
-            padx=10,
-            pady=(5, 10)
-        )
-
-        for column in range(4):
-            totals_frame.grid_columnconfigure(
-                column,
-                weight=1
-            )
-
-        self.subtotal_label = ctk.CTkLabel(
-            totals_frame,
-            text="المجموع: 0.00 ₪",
-            font=("Cairo", 13, "bold"),
-            justify="right"
-        )
-        self.subtotal_label.grid(
-            row=0,
-            column=0,
-            padx=5,
-            pady=5,
-            sticky="ew"
-        )
-
-        self.discount_label = ctk.CTkLabel(
-            totals_frame,
-            text="الخصم: 0.00 ₪",
-            font=("Cairo", 13, "bold"),
-            justify="right"
-        )
-        self.discount_label.grid(
-            row=0,
-            column=1,
-            padx=5,
-            pady=5,
-            sticky="ew"
-        )
-
-        self.tax_label = ctk.CTkLabel(
-            totals_frame,
-            text="الضريبة: 0.00 ₪",
-            font=("Cairo", 13, "bold"),
-            justify="right"
-        )
-        self.tax_label.grid(
-            row=0,
-            column=2,
-            padx=5,
-            pady=5,
-            sticky="ew"
-        )
-
-        self.total_label = ctk.CTkLabel(
-            totals_frame,
-            text="الإجمالي: 0.00 ₪",
-            font=("Cairo", 16, "bold"),
-            text_color="#2563eb",
-            justify="right"
-        )
-        self.total_label.grid(
-            row=0,
-            column=3,
-            padx=5,
-            pady=5,
-            sticky="ew"
-        )
 
         # ======================
         # تحسين عرض الجدول 
@@ -712,6 +693,8 @@ class InvoicesPage(ctk.CTkFrame):
         # زر إلغاء التعديل مخفي افتراضياً
         self.cancel_edit_btn.pack_forget()
 
+        self.after_idle(self.refresh_invoice_summary)
+
     # ======================
     # Enter داخل حقول إدخال الصنف
     # ======================
@@ -815,12 +798,15 @@ class InvoicesPage(ctk.CTkFrame):
             )
             total += item["total"]
 
-        self.refresh_invoice_summary()
+        self.after_idle(self.refresh_invoice_summary)
 
     # ======================
     # قراءة الخصم والضريبة والملاحظات وحساب الإجمالي النهائي
     # ======================
     def get_invoice_summary(self, show_errors=False):
+
+        if not hasattr(self, "notes_entry"):
+            return None
 
         try:
             discount_text = self.discount_percent_var.get().strip()
@@ -854,33 +840,50 @@ class InvoicesPage(ctk.CTkFrame):
     # تحديث ملخص الفاتورة عند تغيير الأصناف أو الخصم أو الضريبة.
     # ======================
     def refresh_invoice_summary(self):
+        """تحديث ملخص الفاتورة المعروض في الشاشة."""
 
+        # لا نحدث الواجهة قبل اكتمال بناء العناصر
         if not hasattr(self, "total_label"):
             return
 
-        summary = self.get_invoice_summary()
-
-        if summary is None:
-            self.subtotal_label.configure(text="المجموع: —")
-            self.discount_label.configure(text="الخصم: —")
-            self.tax_label.configure(text="الضريبة: —")
-            self.total_label.configure(text="الإجمالي: —")
+        if not hasattr(self, "notes_entry"):
             return
 
-        self.subtotal_label.configure(
-            text=f"المجموع: {format_money(summary['subtotal'])}"
+        try:
+            summary = self.get_invoice_summary(show_errors=False)
+        except Exception:
+            summary = None
+
+        def update_label(attribute_name, text):
+            """تحديث أي Label موجود فقط، حتى لا تتوقف الدالة بسبب عنصر ناقص."""
+            if hasattr(self, attribute_name):
+                getattr(self, attribute_name).configure(text=text)
+
+        if summary is None:
+            update_label("subtotal_label", "المجموع: —")
+            update_label("discount_label", "الخصم: —")
+            update_label("tax_label", "الضريبة: —")
+            update_label("total_label", "الإجمالي: —")
+            return
+
+        update_label(
+            "subtotal_label",
+            f"المجموع: {format_money(summary['subtotal'])}"
         )
 
-        self.discount_label.configure(
-            text=f"الخصم: {format_money(summary['discount_amount'])}"
+        update_label(
+            "discount_label",
+            f"الخصم: {format_money(summary['discount_amount'])}"
         )
 
-        self.tax_label.configure(
-            text=f"الضريبة: {format_money(summary['tax_amount'])}"
+        update_label(
+            "tax_label",
+            f"الضريبة: {format_money(summary['tax_amount'])}"
         )
 
-        self.total_label.configure(
-            text=f"الإجمالي: {format_money(summary['total'])}"
+        update_label(
+            "total_label",
+            f"الإجمالي: {format_money(summary['total'])}"
         )
 
 
