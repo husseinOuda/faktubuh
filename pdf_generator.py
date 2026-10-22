@@ -15,7 +15,7 @@ from reportlab.lib.styles import (
 
 from reportlab.platypus import (
     SimpleDocTemplate, Table, TableStyle,
-    Image, Paragraph, Spacer
+    Image, Paragraph, Spacer, KeepTogether
 )
 
 from bidi.algorithm import get_display
@@ -33,6 +33,14 @@ def fix_arabic(text):
         return ""
     reshaped = arabic_reshaper.reshape(str(text))
     return get_display(reshaped)
+
+
+def _format_qty(qty):
+    try:
+        value = float(qty)
+    except (TypeError, ValueError):
+        return str(qty or "")
+    return str(int(value)) if value.is_integer() else f"{value:g}"
 
 
 def generate_pdf(
@@ -74,6 +82,21 @@ def generate_pdf(
         alignment=2  # يمين
     )
 
+    header_style = ParagraphStyle(
+        name='ArabicHeader',
+        fontName='Arabic',
+        fontSize=11,
+        alignment=2
+    )
+
+    cell_style = ParagraphStyle(
+        name='ArabicCell',
+        fontName='Arabic',
+        fontSize=10,
+        leading=14,
+        alignment=2
+    )
+
     title_style = ParagraphStyle(
         name='TitleArabic',
         fontName='Arabic',
@@ -102,37 +125,45 @@ def generate_pdf(
     elements.append(Spacer(1, 15))
 
 
-    # ===== Table =====
-    data = [
-        [
-            Paragraph(fix_arabic("الصنف"), arabic_style),
-            Paragraph(fix_arabic("الوصف"), arabic_style),
-            Paragraph(fix_arabic("السعر"), arabic_style),
-            Paragraph(fix_arabic("الكمية"), arabic_style),
-            Paragraph(fix_arabic("الإجمالي"), arabic_style),
-        ]
+    # ===== جدول الأصناف =====
+    # الترتيب من اليسار لليمين معكوس ليظهر "الصنف" أقصى اليمين (اتجاه عربي)
+    header = [
+        Paragraph(fix_arabic("الإجمالي"), header_style),
+        Paragraph(fix_arabic("الكمية"), header_style),
+        Paragraph(fix_arabic("السعر"), header_style),
+        Paragraph(fix_arabic("الوصف"), header_style),
+        Paragraph(fix_arabic("الصنف"), header_style),
     ]
+    data = [header]
 
     for item in items:
         name, desc, qty, price, item_total = item
 
         data.append([
-            Paragraph(fix_arabic(name), arabic_style),
-            Paragraph(fix_arabic(desc), arabic_style),
-            Paragraph(format_money(price, symbol=False), arabic_style),
-            Paragraph(format_money(qty, symbol=False), arabic_style),
-            Paragraph(format_money(item_total, symbol=False), arabic_style),
+            Paragraph(format_money(item_total, symbol=False), cell_style),
+            Paragraph(_format_qty(qty), cell_style),
+            Paragraph(format_money(price, symbol=False), cell_style),
+            Paragraph(fix_arabic(desc or ""), cell_style),
+            Paragraph(fix_arabic(name or ""), cell_style),
         ])
 
+    # عرض الصفحة المتاح (A4 ناقص الهوامش الافتراضية)
+    col_widths = [70, 55, 60, 140, 126]
 
-    table = Table(data)
+    table = Table(data, colWidths=col_widths, repeatRows=1)
 
     table.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, -1), "Arabic"),
-        ("GRID", (0, 0), (-1, -1), 1, colors.black),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
+        ("GRID", (0, 0), (-1, -1), 0.8, colors.black),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
         ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
+
+    # ✅ هذا هو الإصلاح: إضافة جدول الأصناف إلى محتوى الفاتورة
+    elements.append(table)
 
     # ملخص الفاتورة
     summary_data = [
@@ -173,7 +204,7 @@ def generate_pdf(
     ]))
 
     elements.append(Spacer(1, 12))
-    elements.append(summary_table)
+    elements.append(KeepTogether([summary_table]))
 
     # الملاحظات
     if notes.strip():
@@ -198,7 +229,7 @@ def generate_pdf(
     qr_data = f"""
     Invoice: {invoice_number}
     Client: {client}
-    Date: {datetime.now().strftime('%Y-%m-%d')}
+    Date: {invoice_date}
     Subtotal: {subtotal}
     Discount: {discount_amount}
     Tax: {tax_amount}
