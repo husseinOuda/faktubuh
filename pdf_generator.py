@@ -35,6 +35,13 @@ def fix_arabic(text):
     return get_display(reshaped)
 
 
+_STATUS_LABELS = {
+    "paid": "مدفوعة",
+    "unpaid": "غير مدفوعة",
+    "cancelled": "ملغاة",
+}
+
+
 def _format_qty(qty):
     try:
         value = float(qty)
@@ -55,7 +62,8 @@ def generate_pdf(
         tax_percent=0, 
         tax_amount=0, 
         total=0, 
-        notes=""
+        notes="",
+        status=None
     ):
     file_name = f"invoice_{invoice_id}.pdf"
     doc = SimpleDocTemplate(file_name)
@@ -97,6 +105,14 @@ def generate_pdf(
         alignment=2
     )
 
+    cancelled_style = ParagraphStyle(
+        name='ArabicCancelled',
+        fontName='Arabic',
+        fontSize=14,
+        alignment=2,
+        textColor=colors.HexColor("#b91c1c")
+    )
+
     title_style = ParagraphStyle(
         name='TitleArabic',
         fontName='Arabic',
@@ -122,6 +138,19 @@ def generate_pdf(
     elements.append(Paragraph(fix_arabic(f"رقم الفاتورة: {invoice_number}"), arabic_style))
     elements.append(Paragraph(fix_arabic(f"العميل: {client}"), arabic_style))
     elements.append(Paragraph(fix_arabic(f"التاريخ: {invoice_date}"), arabic_style))
+
+    # حالة الفاتورة (مدفوعة / غير مدفوعة / ملغاة)
+    if status:
+        elements.append(
+            Paragraph(
+                fix_arabic(f"الحالة: {_STATUS_LABELS.get(status, status)}"),
+                arabic_style
+            )
+        )
+
+        if status == "cancelled":
+            elements.append(Spacer(1, 6))
+            elements.append(Paragraph(fix_arabic("⚠ هذه الفاتورة ملغاة"), cancelled_style))
     elements.append(Spacer(1, 15))
 
 

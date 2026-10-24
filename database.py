@@ -8,6 +8,24 @@ from datetime import datetime
 
 DB_NAME = "invoices.db"
 
+# ======================
+# حالات الفواتير
+# ======================
+STATUS_PAID = "paid"
+STATUS_UNPAID = "unpaid"
+STATUS_CANCELLED = "cancelled"
+
+INVOICE_STATUSES = {
+    STATUS_PAID: "مدفوعة",
+    STATUS_UNPAID: "غير مدفوعة",
+    STATUS_CANCELLED: "ملغاة",
+}
+
+
+def status_label(status):
+    """الاسم العربي للحالة (أي قيمة غير معروفة تعتبر غير مدفوعة)."""
+    return INVOICE_STATUSES.get(status, INVOICE_STATUSES[STATUS_UNPAID])
+
 
 # ======================
 # الاتصال بقاعدة البيانات
@@ -121,6 +139,8 @@ def create_tables():
         date TEXT,
         invoice_number TEXT,
         notes TEXT DEFAULT '',
+        status TEXT DEFAULT 'unpaid',
+        archived INTEGER DEFAULT 0,
         FOREIGN KEY(client_id) REFERENCES clients(id)
     )
     """)
@@ -249,7 +269,9 @@ def get_invoice_info(invoice_id):
             invoices.tax_percent,
             invoices.tax_amount,
             invoices.total,
-            invoices.notes
+            invoices.notes,
+            invoices.status,
+            invoices.archived
 
         FROM invoices
 
@@ -277,6 +299,8 @@ def get_invoice_info(invoice_id):
         "tax_amount",
         "total",
         "notes",
+        "status",
+        "archived",
     )
 
     return dict(zip(keys, data))
@@ -431,7 +455,9 @@ def get_invoices():
             invoices.tax_percent,
             invoices.tax_amount,
             invoices.total,
-            invoices.notes
+            invoices.notes,
+            invoices.status,
+            invoices.archived
 
         FROM invoices
 
@@ -456,9 +482,17 @@ def get_invoices():
         "tax_amount",
         "total",
         "notes",
+        "status",
+        "archived",
     )
 
-    return [dict(zip(keys, row)) for row in rows]
+    invoices = [dict(zip(keys, row)) for row in rows]
+
+    for invoice in invoices:
+        invoice["status"] = invoice["status"] or STATUS_UNPAID
+        invoice["archived"] = int(invoice["archived"] or 0)
+
+    return invoices
 
 # جلب الفاتورة حسب الرقم 
 # ======================
@@ -581,6 +615,59 @@ def update_invoice(invoice_id, client_id, items, tax_percent=0, discount_percent
 
 
 # ======================
+# 🏷️ حالة الفاتورة (مدفوعة / غير مدفوعة / ملغاة)
+# ======================
+def _as_id_list(invoice_ids):
+    if isinstance(invoice_ids, (list, tuple, set)):
+        return [int(i) for i in invoice_ids]
+    return [int(invoice_ids)]
+
+
+def set_invoice_status(invoice_ids, status):
+    """تغيير حالة فاتورة واحدة أو عدة فواتير. يرجع عدد الفواتير المعدّلة."""
+
+    if status not in INVOICE_STATUSES:
+        raise ValueError(f"حالة غير صالحة: {status}")
+
+    ids = _as_id_list(invoice_ids)
+
+    if not ids:
+        return 0
+
+    with db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.executemany(
+            "UPDATE invoices SET status=? WHERE id=?",
+            [(status, invoice_id) for invoice_id in ids]
+        )
+
+        return cursor.rowcount
+
+
+# ======================
+# 🗄️ أرشفة الفواتير
+# ======================
+def set_invoice_archived(invoice_ids, archived=True):
+    """أرشفة فاتورة/عدة فواتير أو إلغاء أرشفتها (بدون حذف أي بيانات)."""
+
+    ids = _as_id_list(invoice_ids)
+
+    if not ids:
+        return 0
+
+    with db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.executemany(
+            "UPDATE invoices SET archived=? WHERE id=?",
+            [(1 if archived else 0, invoice_id) for invoice_id in ids]
+        )
+
+        return cursor.rowcount
+
+
+# ======================
 # إنشاء رقم فاتورة احترافي
 # ======================
 def generate_invoice_number():
@@ -618,7 +705,11 @@ def get_total_profit():
     conn = connect()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT SUM(total) FROM invoices")
+    # الفواتير الملغاة لا تدخل في الإجمالي
+    cursor.execute(
+        "SELECT SUM(total) FROM invoices "
+        "WHERE COALESCE(status, 'unpaid') != 'cancelled'"
+    )
     result = cursor.fetchone()[0]
 
     conn.close()
@@ -632,6 +723,7 @@ def get_profit_by_date(start, end):
     cursor.execute("""
     SELECT SUM(total) FROM invoices
     WHERE date BETWEEN ? AND ?
+    AND COALESCE(status, 'unpaid') != 'cancelled'
     """, (start, end))
 
     result = cursor.fetchone()[0]
@@ -683,6 +775,8 @@ def migrate_database():
         _add_column_if_missing(cursor, "invoices", "tax_percent", "REAL DEFAULT 0")
         _add_column_if_missing(cursor, "invoices", "tax_amount", "REAL DEFAULT 0")
         _add_column_if_missing(cursor, "invoices", "notes", "TEXT DEFAULT ''")
+        _add_column_if_missing(cursor, "invoices", "status", "TEXT DEFAULT 'unpaid'")
+        _add_column_if_missing(cursor, "invoices", "archived", "INTEGER DEFAULT 0")
         _add_column_if_missing(cursor, "invoice_items", "description", "TEXT")
 
         # تحديث الفواتير القديمة
@@ -694,7 +788,9 @@ def migrate_database():
                 discount_amount = COALESCE(discount_amount, 0),
                 tax_percent = COALESCE(tax_percent, 0),
                 tax_amount = COALESCE(tax_amount, 0),
-                notes = COALESCE(notes, '')
+                notes = COALESCE(notes, ''),
+                status = COALESCE(status, 'unpaid'),
+                archived = COALESCE(archived, 0)
         """)
 
         # منع تكرار أسماء العملاء في القواعد القديمة

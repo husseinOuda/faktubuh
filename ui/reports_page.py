@@ -3,7 +3,7 @@
 import customtkinter as ctk
 import pandas as pd
 from tkinter import messagebox
-from database import get_total_profit, get_profit_by_date, get_invoices
+from database import get_total_profit, get_profit_by_date, get_invoices, status_label
 from datetime import date
 
 
@@ -30,6 +30,8 @@ def export_invoices_excel(invoices=None):
                 "قيمة الضريبة": invoice["tax_amount"],
                 "الإجمالي النهائي": invoice["total"],
                 "الملاحظات": invoice["notes"],
+                "الحالة": status_label(invoice.get("status")),
+                "مؤرشفة": "نعم" if invoice.get("archived") else "لا",
             }
             for invoice in invoices
         ]
@@ -48,6 +50,8 @@ def export_invoices_excel(invoices=None):
                 "قيمة الضريبة",
                 "الإجمالي النهائي",
                 "الملاحظات",
+                "الحالة",
+                "مؤرشفة",
             ]
         )
 
