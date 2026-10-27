@@ -4,6 +4,16 @@ import os
 import tkinter as tk
 import customtkinter as ctk
 from tkinter import messagebox, ttk
+
+from ui.components.tables import (
+    ROW_EVEN_TAG,
+    ROW_ODD_TAG,
+    STYLE_NAME,
+    configure_zebra,
+    rtl_columns,
+    setup_table_style,
+    zebra_tag,
+)
 from datetime import datetime, timedelta
 
 from pdf_generator import (
@@ -308,8 +318,11 @@ class SavedInvoicesPage(ctk.CTkFrame):
 
         self.sort_reverse = False
 
+        setup_table_style(self)
+
         self.invoice_table = ttk.Treeview(
             self.invoices_frame,
+            style=STYLE_NAME,
             columns=(
                 "number",
                 "client",
@@ -318,7 +331,8 @@ class SavedInvoicesPage(ctk.CTkFrame):
                 "status",
                 "no"
             ),
-            displaycolumns=(
+            # ترتيب عربي: # ثم رقم الفاتورة ... وأخيراً الحالة (من اليمين)
+            displaycolumns=rtl_columns(
                 "no",
                 "number",
                 "client",
@@ -330,6 +344,9 @@ class SavedInvoicesPage(ctk.CTkFrame):
             height=20,
             selectmode="extended"
         )
+
+        # وسوم الصفوف المتناوبة تُعرَّف أولاً لتتغلب عليها وسوم التمييز اللاحقة
+        configure_zebra(self.invoice_table)
 
         # رؤوس الأعمدة 
         # ======================
@@ -379,8 +396,8 @@ class SavedInvoicesPage(ctk.CTkFrame):
 
         self.invoice_table.column(
             "client",
-            width=220,
-            anchor="center"
+            width=240,
+            anchor="e"
         )
 
         self.invoice_table.column(
@@ -391,8 +408,8 @@ class SavedInvoicesPage(ctk.CTkFrame):
 
         self.invoice_table.column(
             "total",
-            width=120,
-            anchor="center"
+            width=140,
+            anchor="e"
         )
 
         # عمود الترقيم التلقائي
@@ -410,6 +427,7 @@ class SavedInvoicesPage(ctk.CTkFrame):
         self.v_scroll = ttk.Scrollbar(
             self.invoices_frame,
             orient="vertical",
+            style="Invoice.Vertical.TScrollbar",
             command=self.invoice_table.yview
         )
         self.invoice_table.grid(row=0, column=0, sticky="nsew", padx=(10,0), pady=10)
@@ -832,6 +850,16 @@ class SavedInvoicesPage(ctk.CTkFrame):
             start=1
         ):
             self.invoice_table.set(item, "no", number)
+
+            # وسوم الحالة/الأرشفة + وسم الصف المتناوب حسب الترتيب الحالي
+            base_tags = tuple(
+                tag for tag in self._row_status_tag.get(item, ())
+                if tag not in (ROW_EVEN_TAG, ROW_ODD_TAG)
+            )
+            tags = base_tags + (zebra_tag(number - 1),)
+
+            self._row_status_tag[item] = tags
+            self.invoice_table.item(item, tags=tags)
 
     # ======================
     # تمييز الصف عند مرور الفأرة

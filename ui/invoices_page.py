@@ -24,7 +24,16 @@ from database import (
     update_invoice
 )
 
-from theme import ENTRY_STYLE, PRIMARY_BTN
+from theme import ENTRY_STYLE, PRIMARY_BTN, BRAND_NAVY, BRAND_LIGHT, TABLE_GRID
+
+from ui.components.pdf_preview import PDFPreviewWindow
+from ui.components.tables import (
+    STYLE_NAME,
+    configure_zebra,
+    rtl_columns,
+    setup_table_style,
+    zebra_tag,
+)
 
 from ui.components.invoice_utils import (
     NumberParseError,
@@ -177,6 +186,9 @@ class InvoicesPage(ctk.CTkFrame):
             "Treeview.Heading",
             font=("Cairo", 13, "bold")
         )
+
+        # نمط جدول الفواتير الاحترافي (0.1.5)
+        setup_table_style(self)
 
         form_frame = ctk.CTkFrame(left_panel)
         form_frame.pack(
@@ -503,17 +515,25 @@ class InvoicesPage(ctk.CTkFrame):
 
         self.items_table = ttk.Treeview(
             items_container,
+            style=STYLE_NAME,
             columns=(
                 "name",
                 "desc",
                 "qty",
                 "price",
-                "total"
+                "total",
+                "no"
+            ),
+            # ترتيب عربي: # ثم الصنف ثم الوصف ... وأخيراً الإجمالي (من اليمين)
+            displaycolumns=rtl_columns(
+                "no", "name", "desc", "qty", "price", "total"
             ),
             show="headings",
             height=10,
             selectmode="extended"
         )
+
+        configure_zebra(self.items_table)
 
         self.items_table.grid(
             row=0,
@@ -524,6 +544,7 @@ class InvoicesPage(ctk.CTkFrame):
         self.items_scroll = ttk.Scrollbar(
             items_container,
             orient="vertical",
+            style="Invoice.Vertical.TScrollbar",
             command=self.items_table.yview
         )
         self.items_scroll.grid(
@@ -536,31 +557,32 @@ class InvoicesPage(ctk.CTkFrame):
             yscrollcommand=self.items_scroll.set
         )
 
-        self.items_table.heading(
-            "name",
-            text="الصنف"
+        # ======================
+        # رؤوس وأعمدة الجدول (محاذاة: نص يمين، أرقام يمين، ترقيم وسط)
+        # ======================
+        column_setup = (
+            # id,     العنوان,      العرض, المحاذاة, stretch
+            ("no",    "#",          50,  "center", False),
+            ("name",  "الصنف",      190, "e",      True),
+            ("desc",  "الوصف",      230, "e",      True),
+            ("qty",   "الكمية",      85, "center", False),
+            ("price", "السعر",      110, "e",      False),
+            ("total", "الإجمالي",   130, "e",      False),
         )
 
-        self.items_table.heading(
-            "desc",
-            text="الوصف"
-        )
-
-        self.items_table.heading(
-            "qty",
-            text="الكمية"
-        )
-
-        self.items_table.heading(
-            "price",
-            text="السعر"
-        )
-
-        self.items_table.heading(
-            "total",
-            text="الإجمالي"
-        )
-        
+        for column_id, title, width, anchor, stretch in column_setup:
+            self.items_table.heading(
+                column_id,
+                text=title,
+                anchor=anchor if anchor != "e" else "center"
+            )
+            self.items_table.column(
+                column_id,
+                width=width,
+                minwidth=50,
+                anchor=anchor,
+                stretch=stretch
+            )
 
         # تعديل الصنف مباشرة داخل الجدول
         # ======================
@@ -569,37 +591,40 @@ class InvoicesPage(ctk.CTkFrame):
         self.items_table.bind("<Delete>", self.delete_selected_item)
         self.items_table.bind("<MouseWheel>", self.on_items_table_scroll, add="+")
 
-        # ======================
-        # تحسين عرض الجدول 
-        # ======================
-        self.items_table.column(
-            "name",
-            width=180,
-            anchor="center"
+        # شريط معلومات أسفل الجدول (عدد الأصناف + مجموع الكميات)
+        self.items_footer = ctk.CTkFrame(
+            right_panel,
+            fg_color=BRAND_LIGHT,
+            corner_radius=8,
+            height=34
+        )
+        self.items_footer.pack(
+            fill="x",
+            padx=10,
+            pady=(0, 8)
         )
 
-        self.items_table.column(
-            "desc",
-            width=220,
-            anchor="center"
+        self.items_footer_label = ctk.CTkLabel(
+            self.items_footer,
+            text="عدد الأصناف: 0   |   مجموع الكميات: 0",
+            font=("Cairo", 13, "bold"),
+            text_color=BRAND_NAVY
+        )
+        self.items_footer_label.pack(
+            side="right",
+            padx=15,
+            pady=4
         )
 
-        self.items_table.column(
-            "qty",
-            width=80,
-            anchor="center"
-        )
-
-        self.items_table.column(
-            "price",
-            width=100,
-            anchor="center"
-        )
-
-        self.items_table.column(
-            "total",
-            width=120,
-            anchor="center"
+        ctk.CTkLabel(
+            self.items_footer,
+            text="نقر مزدوج على أي خلية للتعديل  •  Tab للانتقال  •  Delete للحذف",
+            font=("Cairo", 11),
+            text_color="#64748b"
+        ).pack(
+            side="left",
+            padx=15,
+            pady=4
         )
 
         # ======================
@@ -793,10 +818,22 @@ class InvoicesPage(ctk.CTkFrame):
                     item["desc"],
                     format_money(item["qty"], symbol=False),
                     format_money(item["price"], symbol=False),
-                    format_money(item["total"], symbol=False)
-                )
+                    format_money(item["total"], symbol=False),
+                    index + 1
+                ),
+                tags=(zebra_tag(index),)
             )
             total += item["total"]
+
+        # شريط المعلومات تحت الجدول
+        if hasattr(self, "items_footer_label"):
+            total_qty = sum(float(item.get("qty") or 0) for item in self.items)
+            qty_text = (
+                str(int(total_qty)) if total_qty.is_integer() else f"{total_qty:g}"
+            )
+            self.items_footer_label.configure(
+                text=f"عدد الأصناف: {len(self.items)}   |   مجموع الكميات: {qty_text}"
+            )
 
         self.after_idle(self.refresh_invoice_summary)
 
@@ -917,7 +954,9 @@ class InvoicesPage(ctk.CTkFrame):
         if not row_id or col_index < 0:
             return
 
-        column = self.ALL_COLUMNS[col_index]
+        # ترتيب الأعمدة المعروضة (وليس ترتيب التعريف)
+        display = self.items_table.cget("displaycolumns")
+        column = display[col_index]
 
         # عمود الإجمالي للقراءة فقط
         if column not in self.EDITABLE_COLUMNS:
@@ -1195,148 +1234,19 @@ class InvoicesPage(ctk.CTkFrame):
             )
             return
 
-        client_name = self.client_var.get()
-
-        # إنشاء نافذة
-        preview = ctk.CTkToplevel(self)
-
-        preview.title("معاينة الفاتورة")
-
-        preview.geometry("700x500")
-
-        # عنوان
-        # ======================
-        ctk.CTkLabel(
-            preview,
-            text="🧾 معاينة الفاتورة",
-            font=("Cairo", 24, "bold")
-        ).pack(pady=10)
-
-        # بيانات العميل
-        ctk.CTkLabel(
-            preview,
-            text=f"العميل: {client_name}",
-            font=("Cairo", 18)
-        ).pack()
-
-        ctk.CTkLabel(
-            preview,
-            text=f"التاريخ: {date.today()}",
-            font=("Cairo", 16)
-        ).pack(pady=5)
-
-        # جدول الأصناف
-        # ======================
-        frame = ctk.CTkFrame(preview)
-
-        frame.pack(
-            fill="both",
-            expand=True,
-            padx=10,
-            pady=10
-        )
-
-        # رؤوس الجدول
-        headers = [
-            "الصنف",
-            "الوصف",
-            "الكمية",
-            "السعر",
-            "الإجمالي"
-        ]
-
-        for col, header in enumerate(headers):
-
-            ctk.CTkLabel(
-                frame,
-                text=header,
-                font=("Cairo", 14, "bold")
-            ).grid(
-                row=0,
-                column=col,
-                padx=10,
-                pady=10
-            )
-
-        # الأصناف
-        total = 0
-
-        for row, item in enumerate(self.items, start=1):
-
-            values = [
-                item["name"],
-                item.get("desc", ""),
-                item["qty"],
-                item["price"],
-                item["total"]
-            ]
-
-            total += item["total"]
-
-            for col, value in enumerate(values):
-
-                ctk.CTkLabel(
-                    frame,
-                    text=str(value)
-                ).grid(
-                    row=row,
-                    column=col,
-                    padx=10,
-                    pady=5
-                )
-
-        # الإجمالي
-        # ======================
         summary = self.get_invoice_summary(show_errors=True)
 
         if summary is None:
             return
 
-        ctk.CTkLabel(
-            preview,
-            text=f"المجموع الفرعي: {format_money(summary['subtotal'])}",
-            font=("Cairo", 15)
-        ).pack()
+        # معاينة الفاتورة بنفس تصميم PDF النهائي
+        pdf_path = generate_temp_pdf(
+            self.client_var.get(),
+            self.items,
+            summary
+        )
 
-        ctk.CTkLabel(
-            preview,
-            text=(
-                f"الخصم ({summary['discount_percent']:g}%): "
-                f"{format_money(summary['discount_amount'])}"
-            ),
-            font=("Cairo", 15)
-        ).pack()
-
-        ctk.CTkLabel(
-            preview,
-            text=(
-                f"الضريبة ({summary['tax_percent']:g}%): "
-                f"{format_money(summary['tax_amount'])}"
-            ),
-            font=("Cairo", 15)
-        ).pack()
-
-        ctk.CTkLabel(
-            preview,
-            text=f"الإجمالي النهائي: {format_money(summary['total'])}",
-            font=("Cairo", 18, "bold"),
-            text_color="#2563eb"
-        ).pack(pady=10)
-
-        if summary["notes"]:
-            ctk.CTkLabel(
-                preview,
-                text="📝 الملاحظات:",
-                font=("Cairo", 15, "bold")
-            ).pack()
-
-            ctk.CTkLabel(
-                preview,
-                text=summary["notes"],
-                font=("Cairo", 14),
-                wraplength=650,
-                justify="right"
-            ).pack(pady=5)
+        PDFPreviewWindow(self, pdf_path)
 
     
     # ======================
