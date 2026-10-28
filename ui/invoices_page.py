@@ -1542,21 +1542,18 @@ class InvoicesPage(ctk.CTkFrame):
     # ======================
     def print_invoice(self, invoice_id):
 
-        invoices = get_invoices()
-
-        target = None
-
-        for inv in invoices:
-
-            if inv[0] == invoice_id:
-                target = inv
-                break
+        # الفاتورة قاموس (وليست قائمة) → نجلبها مباشرة بالمعرّف
+        target = get_invoice_info(invoice_id)
 
         if not target:
+            messagebox.showerror(
+                "خطأ",
+                "لم يتم العثور على الفاتورة"
+            )
             return
 
         invoice_number = target["invoice_number"]
-        client_name = target["client"]
+        client_name = target["client"] or "غير محدد"
 
         items = get_invoice_items(invoice_id)
 
@@ -1572,14 +1569,15 @@ class InvoicesPage(ctk.CTkFrame):
             tax_percent=target["tax_percent"],
             tax_amount=target["tax_amount"],
             total=target["total"],
-            notes=target["notes"]
+            notes=target["notes"],
+            status=target["status"]
         )
 
         try:
 
             os.startfile(file_name, "print")
 
-        except:
+        except Exception:
 
             messagebox.showerror(
                 "خطأ",
