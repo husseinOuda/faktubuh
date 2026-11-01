@@ -1,17 +1,13 @@
 
-تحسين جدول الفواتير
+تطوير صفحة الفواتير المحفوظة
 
-تم تطوير هذا الإصدار (0.1.5) للتالي: 
+تم تطوير هذا الإصدار (0.1.6) للتالي: 
 
-🧾 تحسين شكل جدول الفواتير (احترافي) مثل برامج المحاسبة: 
- - محاذاة منظمة
- - تنسيق احترافي أكثر
- - جدول حقيقي احترافي (يشبه Excel)
- - عرض أفضل
- - تجربة مستخدم أقوى
- - ألوان وهوية بصرية.
- - ترويسة وتذييل
- - ختم وتوقيع
+# تطوير صفحة الفواتير المحفوظة، بإضافة:
+* سندات القبض.
+* سندات الصرف.
+* إدارة المصروفات.
+* لوحة تحكم مالية.
 
 
 مع الأخذ بالاعتبار 
@@ -26,14 +22,25 @@ invoice_system/
 ├── invoices.db
 ├── pdf_generator.py
 ├── theme.py
+├── voucher_pdf.py
+├── arabic_words.py
 │
 ├── ui/
 │   ├── invoices_page.py
 │   ├── saved_invoices_page.py 
+│   ├── receipts_page.py
+│   ├── payments_page.py
+│   ├── finance_page.py
+│   ├── finance_dashboard_page.py
 │   ├── clients_page.py
 │   ├── reports_page.py
 │   ├── components/
 │   │   ├── sidebar.py
+│   │   ├── period.py
+│   │   ├── list_page.py
+│   │   ├── files.py
+│   │   ├── dialogs.py
+│   │   ├── data_table.py
 │   │   ├── cards.py
 │   │   ├── buttons.py
 │   │   ├── tables.py

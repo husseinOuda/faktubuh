@@ -13,7 +13,7 @@ from database import (
 from pdf_generator import generate_pdf
 from theme import BTN_STYLE
 
-from ui.saved_invoices_page import SavedInvoicesPage
+from ui.finance_page import FinancePage
 from ui.invoices_page import InvoicesPage
 from ui.clients_page import ClientsPage
 from ui.reports_page import ReportsPage
@@ -88,14 +88,14 @@ class LoginWindow:
         
         ctk.CTkLabel(
             left_content,
-            text="نظام متكامل لإدارة الفواتير والعملاء والتقارير",
+            text="نظام متكامل لإدارة الفواتير والسندات والمصروفات والعملاء",
             font=("Cairo", 14),
             text_color="white"
         ).pack(pady=10)
         
         ctk.CTkLabel(
             left_content,
-            text="V: 0.1.5",
+            text="V: 0.1.6",
             font=("Cairo", 13),
             text_color="#dbeafe"
         ).pack(pady=(20,0))
@@ -229,6 +229,13 @@ class App:
         ).pack(fill="x", padx=15, pady=8)
         
         ctk.CTkButton(
+            self.sidebar,
+            text="📈 المالية",
+            command=self.show_finance_dashboard,
+            **BTN_STYLE
+        ).pack(fill="x", padx=15, pady=8)
+
+        ctk.CTkButton(
             self.sidebar, 
             text="👥 العملاء", 
             command=self.show_clients,
@@ -264,11 +271,20 @@ class App:
         self.pages["invoices"] = self.current_page
         self.current_page.pack(fill="both", expand=True)
 
-    def show_saved_invoices(self):
+    def show_finance(self, tab="invoices", **options):
+        """المركز المالي: الفواتير | سندات القبض | سندات الصرف | المصروفات | اللوحة."""
         self.clear_main()
-        self.current_page = SavedInvoicesPage(self.main_frame, self)
-        self.pages["saved_invoices"] = self.current_page
+        self.current_page = FinancePage(
+            self.main_frame, self, tab=tab, **options
+        )
+        self.pages["finance"] = self.current_page
         self.current_page.pack(fill="both", expand=True)
+
+    def show_saved_invoices(self):
+        self.show_finance("invoices")
+
+    def show_finance_dashboard(self):
+        self.show_finance("dashboard")
 
     def show_clients(self):
         self.clear_main()

@@ -16,12 +16,23 @@ class PDFPreviewWindow(ctk.CTkToplevel):
     # =========================
     # إنشاء نافذة المعاينة 
     # =========================
-    def __init__(self, parent, pdf_path):
+    def __init__(
+        self,
+        parent,
+        pdf_path,
+        title="معاينة الفاتورة",
+        share_message="مرحباً، تم إصدار فاتورتكم، يرجى إرفاق ملف PDF المرفق وإرساله.",
+        email_subject="فاتورة",
+        email_body="مرفق لكم الفاتورة.",
+    ):
         super().__init__(parent)
 
         self.pdf_path = pdf_path
+        self.share_message = share_message
+        self.email_subject = email_subject
+        self.email_body = email_body
 
-        self.title("معاينة الفاتورة")
+        self.title(title)
         self.geometry("820x650")
 
         screen_width = self.winfo_screenwidth()
@@ -470,11 +481,7 @@ class PDFPreviewWindow(ctk.CTkToplevel):
     # مشاركة عبر واتساب
     # =========================
     def send_whatsapp(self):
-        message = (
-            "مرحباً، "
-            "تم إصدار فاتورتكم، "
-            "يرجى إرفاق ملف PDF المرفق وإرساله."
-        )
+        message = self.share_message
         url = (
             "https://wa.me/?text="
             + urllib.parse.quote(message)
@@ -486,10 +493,10 @@ class PDFPreviewWindow(ctk.CTkToplevel):
     # =========================
     def send_email(self):
         subject = urllib.parse.quote(
-            "فاتورة"
+            self.email_subject
         )
         body = urllib.parse.quote(
-            "مرفق لكم الفاتورة."
+            self.email_body
         )
         url = (
             f"mailto:?subject={subject}&body={body}"

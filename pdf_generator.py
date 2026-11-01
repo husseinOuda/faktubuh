@@ -391,7 +391,7 @@ def _draw_name(c, name, x, y, size, right=True):
         c.drawString(x, y, text)
 
 
-def _draw_first_header(c, invoice_number):
+def _draw_first_header(c, invoice_number, title="فاتورة", subtitle="I N V O I C E"):
     top = PAGE_H
 
     # الشريط الرئيسي + خط لوني رفيع أسفله
@@ -435,11 +435,11 @@ def _draw_first_header(c, invoice_number):
     # عنوان الفاتورة (يسار)
     c.setFillColor(colors.white)
     c.setFont(FONT_BOLD, 30)
-    c.drawString(MARGIN_X, top - 52, fix_arabic("فاتورة"))
+    c.drawString(MARGIN_X, top - 52, fix_arabic(title))
 
     c.setFillColor(colors.HexColor("#8fb1ee"))
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(MARGIN_X + 1, top - 70, "I N V O I C E")
+    c.drawString(MARGIN_X + 1, top - 70, subtitle)
 
     # رقم الفاتورة داخل شارة
     num = str(invoice_number or "")
@@ -454,7 +454,7 @@ def _draw_first_header(c, invoice_number):
     c.drawString(MARGIN_X + 11, top - 91.5, shown)
 
 
-def _draw_mini_header(c, invoice_number):
+def _draw_mini_header(c, invoice_number, label="فاتورة رقم"):
     top = PAGE_H
     c.setFillColor(C_NAVY)
     c.rect(0, top - MINI_HEADER_H, PAGE_W, MINI_HEADER_H, stroke=0, fill=1)
@@ -470,18 +470,18 @@ def _draw_mini_header(c, invoice_number):
     c.setFont(FONT, 10)
     c.drawString(
         MARGIN_X, top - 17,
-        f"{fix_arabic('فاتورة رقم')}  {invoice_number}",
+        f"{fix_arabic(label)}  {invoice_number}",
     )
 
 
-def _draw_cancelled_watermark(c):
+def _draw_cancelled_watermark(c, text="ملغاة"):
     c.saveState()
     c.setFillColor(colors.HexColor("#b91c1c"))
     c.setFillAlpha(0.10)
     c.setFont(FONT_BOLD, 120)
     c.translate(PAGE_W / 2, PAGE_H / 2 - 30)
     c.rotate(35)
-    c.drawCentredString(0, 0, fix_arabic("ملغاة"))
+    c.drawCentredString(0, 0, fix_arabic(text))
     c.restoreState()
 
 

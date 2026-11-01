@@ -328,6 +328,8 @@ class SavedInvoicesPage(ctk.CTkFrame):
                 "client",
                 "date",
                 "total",
+                "paid",
+                "remaining",
                 "status",
                 "no"
             ),
@@ -338,6 +340,8 @@ class SavedInvoicesPage(ctk.CTkFrame):
                 "client",
                 "date",
                 "total",
+                "paid",
+                "remaining",
                 "status"
             ),
             show="headings",
@@ -375,6 +379,18 @@ class SavedInvoicesPage(ctk.CTkFrame):
         )
 
         self.invoice_table.heading(
+            "paid",
+            text="المحصّل",
+            command=lambda: self.sort_table("paid")
+        )
+
+        self.invoice_table.heading(
+            "remaining",
+            text="المتبقي",
+            command=lambda: self.sort_table("remaining")
+        )
+
+        self.invoice_table.heading(
             "status",
             text="الحالة",
             command=lambda: self.sort_table("status")
@@ -396,7 +412,7 @@ class SavedInvoicesPage(ctk.CTkFrame):
 
         self.invoice_table.column(
             "client",
-            width=240,
+            width=200,
             anchor="e"
         )
 
@@ -408,7 +424,19 @@ class SavedInvoicesPage(ctk.CTkFrame):
 
         self.invoice_table.column(
             "total",
-            width=140,
+            width=130,
+            anchor="e"
+        )
+
+        self.invoice_table.column(
+            "paid",
+            width=120,
+            anchor="e"
+        )
+
+        self.invoice_table.column(
+            "remaining",
+            width=120,
             anchor="e"
         )
 
@@ -554,7 +582,7 @@ class SavedInvoicesPage(ctk.CTkFrame):
             hover_color="#4b5563",
             command=lambda: self.change_selected_status(STATUS_CANCELLED)
         )
-        self.cancel_btn.grid(row=1, column=4, columnspan=2, padx=5, pady=5, sticky="ew")
+        self.cancel_btn.grid(row=1, column=4, padx=5, pady=5, sticky="ew")
 
         self.archive_btn = ctk.CTkButton(
             self.actions_frame,
@@ -563,7 +591,16 @@ class SavedInvoicesPage(ctk.CTkFrame):
             hover_color="#6d28d9",
             command=self.toggle_archive_selected
         )
-        self.archive_btn.grid(row=1, column=6, padx=5, pady=5, sticky="ew")
+        self.archive_btn.grid(row=1, column=5, padx=5, pady=5, sticky="ew")
+
+        self.receipt_btn = ctk.CTkButton(
+            self.actions_frame,
+            text="💰 سند قبض",
+            fg_color="#0f766e",
+            hover_color="#115e59",
+            command=self.new_receipt_for_selected
+        )
+        self.receipt_btn.grid(row=1, column=6, padx=5, pady=5, sticky="ew")
 
         # قائمة الفأرة اليمنى
         self.context_menu = tk.Menu(self, tearoff=0)
@@ -583,6 +620,7 @@ class SavedInvoicesPage(ctk.CTkFrame):
             command=lambda: self.change_selected_status(STATUS_CANCELLED)
         )
         self.context_menu.add_separator()
+        self.context_menu.add_command(label="💰 إنشاء سند قبض", command=self.new_receipt_for_selected)
         self.context_menu.add_command(label="🗄 أرشفة / إلغاء الأرشفة", command=self.toggle_archive_selected)
 
         self.load_invoices()
@@ -664,6 +702,24 @@ class SavedInvoicesPage(ctk.CTkFrame):
         )
         self.archived_label.configure(
             text=f"🗄 المؤرشفة: {archived_count}"
+        )
+
+    # ======================
+    # إنشاء سند قبض للفاتورة المحددة
+    # ======================
+    def new_receipt_for_selected(self):
+        selected = self.invoice_table.selection()
+
+        if len(selected) != 1:
+            messagebox.showwarning(
+                "تنبيه",
+                "يرجى اختيار فاتورة واحدة لإنشاء سند قبض لها"
+            )
+            return
+
+        self.app.show_finance(
+            "receipts",
+            new_receipt_invoice_id=int(selected[0])
         )
 
     # ======================
@@ -829,6 +885,9 @@ class SavedInvoicesPage(ctk.CTkFrame):
                     invoice["client"],
                     invoice["date"],
                     format_money(invoice["total"]),
+                    format_money(invoice["collected"]),
+                    "—" if invoice["status"] == STATUS_CANCELLED
+                    else format_money(invoice["remaining"]),
                     status_label(invoice["status"]) + (
                         " 🗄" if invoice["archived"] else ""
                     )
@@ -960,7 +1019,9 @@ class SavedInvoicesPage(ctk.CTkFrame):
             "client": 1,
             "date": 2,
             "total": 3,
-            "status": 4,
+            "paid": 4,
+            "remaining": 5,
+            "status": 6,
         }[column]
 
         def sort_key(value):
@@ -1141,7 +1202,11 @@ class SavedInvoicesPage(ctk.CTkFrame):
         if not confirm:
             return
 
-        db_delete_invoice(invoice_id)
+        try:
+            db_delete_invoice(invoice_id)
+        except ValueError as e:
+            messagebox.showerror("لا يمكن الحذف", str(e))
+            return
 
         self.load_invoices()
 
