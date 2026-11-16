@@ -161,6 +161,7 @@ def create_tables():
     """)
     
     _create_finance_tables(cursor)
+    _create_settings_table(cursor)
 
     conn.commit()
     conn.close()
@@ -823,6 +824,7 @@ def migrate_database():
 
         # جداول السندات والمصروفات (0.1.6) — آمنة على القواعد القديمة
         _create_finance_tables(cursor)
+        _create_settings_table(cursor)
 
         # تحديث الفواتير القديمة
         cursor.execute("""
@@ -2485,3 +2487,46 @@ def get_recent_transactions(limit=8):
         }
         for kind, number, party, amount, date, _id in rows
     ]
+
+
+# ======================================================================
+# 0.1.7 — إعدادات التطبيق (مثل آخر مستوى تكبير في المعاينة)
+# ======================================================================
+def _create_settings_table(cursor):
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+
+
+def get_setting(key, default=None):
+    """يقرأ إعداداً محفوظاً. يرجع default عند عدم وجوده أو عند أي خطأ."""
+    try:
+        with db_connection() as conn:
+            cursor = conn.cursor()
+            _create_settings_table(cursor)
+            cursor.execute(
+                "SELECT value FROM app_settings WHERE key = ?", (key,)
+            )
+            row = cursor.fetchone()
+        return row[0] if row else default
+    except Exception:
+        return default
+
+
+def set_setting(key, value):
+    """يحفظ إعداداً (نصاً). يرجع True عند النجاح."""
+    try:
+        with db_connection() as conn:
+            cursor = conn.cursor()
+            _create_settings_table(cursor)
+            cursor.execute(
+                "INSERT INTO app_settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, str(value)),
+            )
+        return True
+    except Exception:
+        return False

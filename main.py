@@ -95,7 +95,7 @@ class LoginWindow:
         
         ctk.CTkLabel(
             left_content,
-            text="V: 0.1.6",
+            text="V: 0.1.7",
             font=("Cairo", 13),
             text_color="#dbeafe"
         ).pack(pady=(20,0))

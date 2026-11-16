@@ -8,7 +8,23 @@ from tkinter import filedialog, messagebox
 
 
 def open_file(path, print_it=False):
-    """يفتح الملف بالبرنامج الافتراضي (أو يطبعه على ويندوز)."""
+    """
+    يفتح الملف بالبرنامج الافتراضي أو يطبعه (0.1.7).
+
+    الطباعة صارت مباشرة عبر PyMuPDF + طابعة ويندوز، فلا تحتاج برنامج PDF مرتبطاً
+    (كانت os.startfile(..., "print") تفشل بالخطأ WinError 1155).
+    """
+    path = os.path.abspath(path)
+
+    if path.lower().endswith(".pdf"):
+        from ui.components.print_utils import open_pdf_safely, print_pdf_file
+
+        if print_it:
+            print_pdf_file(path)
+        else:
+            open_pdf_safely(path)
+        return
+
     if hasattr(os, "startfile"):
         if print_it:
             os.startfile(path, "print")
