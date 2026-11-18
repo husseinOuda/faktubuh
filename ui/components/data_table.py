@@ -5,8 +5,9 @@
 ترقيم تلقائي (#)، أعمدة من اليمين لليسار، واختصارات لوحة المفاتيح.
 """
 
+import tkinter as tk
 import customtkinter as ctk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 from theme import TABLE_HOVER
 from ui.components.tables import (
@@ -33,17 +34,29 @@ class DataTable(ctk.CTkFrame):
     columns: قائمة (key, عنوان, عرض, محاذاة) بالترتيب المنطقي
              (الأول = الأقرب لليمين). عمود «#» يُضاف تلقائياً.
     tag_colors: {وسم: لون الخط} لتلوين الصفوف حسب الحالة.
+
+    التعديل المباشر (0.1.8):
+      editable_columns: مفاتيح الأعمدة القابلة للتعديل بالنقر المزدوج أو F2.
+      on_edit(iid, key, text): تُستدعى عند تثبيت القيمة. ارفع ValueError لرفضها
+        (يبقى المحرر مفتوحاً مع الرسالة)، أو أرجع نصاً ليُعرض في الخلية بدل ما
+        كُتب (تنسيق/تنظيف).
     """
 
     def __init__(self, parent, columns, tag_colors=None, height=12,
-                 on_open=None, on_delete=None, on_select=None):
+                 on_open=None, on_delete=None, on_select=None,
+                 editable_columns=(), on_edit=None):
         super().__init__(parent)
 
         self.columns = list(columns)
         self.on_open = on_open
         self.on_delete = on_delete
         self.on_select = on_select
+        self.editable_columns = tuple(editable_columns)
+        self.on_edit = on_edit
         self.context_menu = None
+
+        self._editor = None
+        self._editor_state = None
 
         self._row_tags = {}
         self._sort_values = {}
@@ -89,7 +102,7 @@ class DataTable(ctk.CTkFrame):
             self,
             orient="vertical",
             style="Invoice.Vertical.TScrollbar",
-            command=self.tree.yview,
+            command=self._yview,
         )
         self.tree.configure(yscrollcommand=self.scrollbar.set)
 
@@ -104,6 +117,8 @@ class DataTable(ctk.CTkFrame):
         self.tree.bind("<KP_Enter>", self._on_enter)
         self.tree.bind("<Delete>", self._on_delete)
         self.tree.bind("<Button-3>", self._on_right_click)
+        self.tree.bind("<F2>", self._on_f2)
+        self.tree.bind("<MouseWheel>", lambda e: self.cancel_edit(), add="+")
 
     # ======================
     # البيانات
@@ -116,6 +131,8 @@ class DataTable(ctk.CTkFrame):
           tags:   وسوم الحالة (اختياري)
           sort:   {key: قيمة للفرز} (اختياري)
         """
+        self.cancel_edit()
+
         self._hover_row = None
         self._row_tags = {}
         self._sort_values = {}
@@ -166,6 +183,8 @@ class DataTable(ctk.CTkFrame):
     # الفرز
     # ======================
     def sort_by(self, key):
+        self.cancel_edit()
+
         def value_of(item):
             stored = self._sort_values.get(item, {})
 
@@ -256,6 +275,12 @@ class DataTable(ctk.CTkFrame):
 
         self.tree.selection_set(row)
 
+        key = self._column_key_at(event.x)
+
+        if self.on_edit and key in self.editable_columns:
+            self.start_edit(row, key)
+            return "break"
+
         if self.on_open:
             self.on_open(row)
 
@@ -272,5 +297,207 @@ class DataTable(ctk.CTkFrame):
     def _on_delete(self, event=None):
         if self.tree.selection() and self.on_delete:
             self.on_delete()
+
+        return "break"
+
+    # ======================
+    # التعديل المباشر داخل الخلية (0.1.8)
+    # ======================
+    def _yview(self, *args):
+        self.cancel_edit()
+        self.tree.yview(*args)
+
+    def _column_key_at(self, x):
+        """مفتاح العمود تحت الإحداثي x (يراعي ترتيب العرض من اليمين)."""
+        try:
+            index = int(self.tree.identify_column(x).lstrip("#")) - 1
+        except ValueError:
+            return None
+
+        display = [str(c) for c in self.tree.cget("displaycolumns")]
+
+        if 0 <= index < len(display):
+            return display[index]
+
+        return None
+
+    def _on_f2(self, event=None):
+        selected = self.tree.selection()
+
+        if selected and self.on_edit and self.editable_columns:
+            self.start_edit(selected[0], self.editable_columns[0])
+
+        return "break"
+
+    def start_edit(self, iid, key):
+        """يفتح محرراً فوق الخلية. يرجع True عند النجاح."""
+        iid = str(iid)
+
+        if (
+            not self.on_edit
+            or key not in self.editable_columns
+            or not self.tree.exists(iid)
+        ):
+            return False
+
+        if not self.commit_edit():
+            return False
+
+        self.tree.see(iid)
+        self.tree.update_idletasks()
+
+        bbox = self.tree.bbox(iid, key)
+
+        if not bbox:
+            return False
+
+        x, y, width, height = bbox
+        original = str(self.tree.set(iid, key))
+
+        self.tree.selection_set(iid)
+        self.tree.focus(iid)
+
+        editor = tk.Entry(
+            self.tree,
+            font=("Cairo", 12),
+            justify="right",
+            relief="solid",
+            bd=1,
+            highlightthickness=2,
+            highlightcolor="#2563eb",
+            highlightbackground="#2563eb",
+        )
+        editor.insert(0, original)
+        editor.select_range(0, "end")
+        editor.place(x=x, y=y, width=width, height=height)
+        editor.focus_set()
+
+        self._editor = editor
+        self._editor_state = {
+            "iid": iid, "key": key, "original": original, "busy": False,
+        }
+
+        editor.bind("<Return>", lambda e: self._editor_enter())
+        editor.bind("<KP_Enter>", lambda e: self._editor_enter())
+        editor.bind("<Escape>", lambda e: self._editor_escape())
+        editor.bind("<Tab>", lambda e: self._editor_tab(True))
+        editor.bind("<ISO_Left_Tab>", lambda e: self._editor_tab(False))
+        editor.bind("<Shift-Tab>", lambda e: self._editor_tab(False))
+        editor.bind("<FocusOut>", lambda e: self._editor_focus_out())
+        return True
+
+    def commit_edit(self, show_error=False):
+        """
+        يثبّت التعديل الجاري. يرجع True إذا أُغلق المحرر (أو لم يكن مفتوحاً)،
+        و False إن بقي مفتوحاً بسبب قيمة مرفوضة.
+        """
+        editor, state = self._editor, self._editor_state
+
+        if editor is None or state is None:
+            return True
+
+        text = editor.get().strip()
+
+        if text == state["original"].strip():
+            self._destroy_editor()
+            return True
+
+        try:
+            result = self.on_edit(state["iid"], state["key"], text)
+
+        except ValueError as error:
+            if not show_error:
+                # فقدان تركيز مع قيمة مرفوضة → تراجع بصمت
+                self._destroy_editor()
+                return True
+
+            editor.configure(
+                bg="#fee2e2",
+                highlightcolor="#dc2626",
+                highlightbackground="#dc2626",
+            )
+            self.bell()
+
+            state["busy"] = True
+            messagebox.showerror("قيمة غير صالحة", str(error),
+                                 parent=self.winfo_toplevel())
+
+            if self._editor is editor:
+                state["busy"] = False
+                editor.focus_set()
+
+            return False
+
+        shown = text if result is None or result is True else str(result)
+
+        iid, key = state["iid"], state["key"]
+        self._destroy_editor()
+
+        if self.tree.exists(iid):
+            self.tree.set(iid, key, shown)
+
+        return True
+
+    def cancel_edit(self):
+        self._destroy_editor()
+
+    def _destroy_editor(self):
+        editor = self._editor
+
+        # نصفّر الحالة أولاً حتى لا يعيد FocusOut استدعاء الإنهاء
+        self._editor = None
+        self._editor_state = None
+
+        if editor is not None:
+            try:
+                editor.destroy()
+            except tk.TclError:
+                pass
+
+    def _editor_enter(self):
+        iid = self._editor_state["iid"] if self._editor_state else None
+
+        if self.commit_edit(show_error=True) and iid and self.tree.exists(iid):
+            self.tree.selection_set(iid)
+            self.tree.focus_set()
+
+        return "break"
+
+    def _editor_escape(self):
+        self.cancel_edit()
+        self.tree.focus_set()
+        return "break"
+
+    def _editor_focus_out(self):
+        state = self._editor_state
+
+        if state is None or state["busy"]:
+            return
+
+        self.commit_edit()
+
+    def _editor_tab(self, forward):
+        state = self._editor_state
+
+        if not state or not self.editable_columns:
+            return "break"
+
+        iid, key = state["iid"], state["key"]
+        columns = list(self.editable_columns)
+        rows = list(self.tree.get_children())
+
+        if not self.commit_edit(show_error=True):
+            return "break"
+
+        position = columns.index(key) + (1 if forward else -1)
+        row_index = rows.index(iid) if iid in rows else 0
+
+        if position >= len(columns):
+            position, row_index = 0, row_index + 1
+        elif position < 0:
+            position, row_index = len(columns) - 1, row_index - 1
+
+        if 0 <= row_index < len(rows):
+            self.start_edit(rows[row_index], columns[position])
 
         return "break"

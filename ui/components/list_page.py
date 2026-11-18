@@ -40,6 +40,9 @@ class ListPageBase(ctk.CTkFrame):
     EXPORT_NAME = "export"
     EXPORT_HEADERS = []
     ACTIONS_PER_ROW = 5
+    SHOW_PERIOD = True       # False: بدون فلتر الفترة (مثل صفحة العملاء)
+    EDITABLE_COLUMNS = ()    # أعمدة تُعدَّل داخل الجدول بالنقر المزدوج / F2
+    HINT = ""                # سطر إرشادي صغير تحت العنوان (اختياري)
 
     def __init__(self, parent, app):
         super().__init__(parent)
@@ -68,6 +71,9 @@ class ListPageBase(ctk.CTkFrame):
     # بناء الواجهة
     # ======================
     def _build_header(self):
+        if not self.TITLE:          # استخدام مضمّن داخل تبويب (بلا عنوان)
+            return
+
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.grid(row=0, column=0, sticky="ew", padx=20, pady=(14, 6))
         header.grid_columnconfigure(0, weight=1)
@@ -86,7 +92,18 @@ class ListPageBase(ctk.CTkFrame):
             text_color="#6b7280",
         ).grid(row=1, column=0, sticky="w", pady=(2, 0))
 
+        if self.HINT:
+            ctk.CTkLabel(
+                header,
+                text=self.HINT,
+                font=("Cairo", 12),
+                text_color="#2563eb",
+            ).grid(row=2, column=0, sticky="w", pady=(2, 0))
+
     def _build_cards(self):
+        if not self.STAT_CARDS:
+            return
+
         frame = ctk.CTkFrame(self, fg_color="transparent")
         frame.grid(row=1, column=0, sticky="ew", padx=15, pady=(0, 8))
 
@@ -123,12 +140,12 @@ class ListPageBase(ctk.CTkFrame):
         # الفترة الزمنية
         self.period_var = ctk.StringVar(value="الكل")
 
-        ctk.CTkSegmentedButton(
+        period_bar = ctk.CTkSegmentedButton(
             frame,
             values=PERIODS,
             variable=self.period_var,
             command=lambda value: self.refresh(),
-        ).grid(row=1, column=0, padx=(10, 6), pady=(0, 10))
+        )
 
         self.year_menu = ctk.CTkOptionMenu(
             frame,
@@ -136,7 +153,13 @@ class ListPageBase(ctk.CTkFrame):
             width=90,
             command=lambda value: self.refresh(),
         )
-        self.year_menu.grid(row=1, column=1, padx=6, pady=(0, 10))
+
+        filter_column = 0
+
+        if self.SHOW_PERIOD:
+            period_bar.grid(row=1, column=0, padx=(10, 6), pady=(0, 10))
+            self.year_menu.grid(row=1, column=1, padx=6, pady=(0, 10))
+            filter_column = 2
 
         # فلتر الحالة
         self._filter_map = dict(self.FILTER_OPTIONS)
@@ -149,7 +172,7 @@ class ListPageBase(ctk.CTkFrame):
                 values=[label for label, _ in self.FILTER_OPTIONS],
                 variable=self.filter_var,
                 command=lambda value: self.refresh(),
-            ).grid(row=1, column=2, padx=6, pady=(0, 10))
+            ).grid(row=1, column=filter_column, padx=(10, 6), pady=(0, 10))
         else:
             self.filter_var = ctk.StringVar(value="")
 
@@ -168,6 +191,8 @@ class ListPageBase(ctk.CTkFrame):
             tag_colors=self.TAG_COLORS,
             on_open=self.on_open_record,
             on_delete=self.delete_selected,
+            editable_columns=self.EDITABLE_COLUMNS,
+            on_edit=self._handle_cell_edit if self.EDITABLE_COLUMNS else None,
         )
         self.table.grid(row=3, column=0, sticky="nsew", padx=10, pady=(0, 8))
 
@@ -223,8 +248,20 @@ class ListPageBase(ctk.CTkFrame):
     def on_open_record(self, iid):
         pass
 
+    def on_cell_edit(self, record, key, text):
+        """تثبيت تعديل خلية. ارفع ValueError للرفض، أو أرجع النص المعروض."""
+        raise ValueError("هذا العمود غير قابل للتعديل")
+
     def delete_selected(self):
         pass
+
+    def _handle_cell_edit(self, iid, key, text):
+        record = self.records.get(str(iid))
+
+        if record is None:
+            raise ValueError("السجل غير موجود، حدّث الصفحة")
+
+        return self.on_cell_edit(record, key, text)
 
     # ======================
     # التحديث والفلاتر

@@ -95,7 +95,7 @@ class LoginWindow:
         
         ctk.CTkLabel(
             left_content,
-            text="V: 0.1.7",
+            text="V: 0.1.8",
             font=("Cairo", 13),
             text_color="#dbeafe"
         ).pack(pady=(20,0))
@@ -290,6 +290,17 @@ class App:
         self.clear_main()
         self.current_page = ClientsPage(self.main_frame, self)
         self.pages["clients"] = self.current_page
+        self.current_page.pack(fill="both", expand=True)
+
+    def show_client_details(self, client_id, tab="invoices"):
+        """صفحة تفاصيل العميل (فواتير، أرشيف، سندات، كشف حساب)."""
+        from ui.client_details_page import ClientDetailsPage
+
+        self.clear_main()
+        self.current_page = ClientDetailsPage(
+            self.main_frame, self, client_id, tab=tab
+        )
+        self.pages["client_details"] = self.current_page
         self.current_page.pack(fill="both", expand=True)
 
     def show_reports(self):

@@ -1,309 +1,279 @@
 # ui/clients_page.py
+"""
+إدارة العملاء (0.1.8):
 
-import customtkinter as ctk
-from tkinter import ttk
+  - جدول بكل بيانات العميل: الاسم، الهاتف، البريد، العنوان، الملاحظات
+    + عدد الفواتير + إجمالي المشتريات + الرصيد (عليه / له / مسدّد).
+  - تعديل مباشر داخل الجدول: نقر مزدوج على الخلية (أو F2) ثم Enter للحفظ
+    · Esc للتراجع · Tab للخلية التالية.
+  - بحث فوري وفلتر حسب حالة الرصيد.
+  - فتح صفحة تفاصيل العميل (فواتير، أرشيف، سندات، كشف حساب).
+  - إجراءات سريعة: فاتورة جديدة، سند قبض، كشف حساب.
+"""
+
 from tkinter import messagebox
 
 from database import (
-    add_client,
-    get_clients,
+    BALANCE_CREDIT,
+    BALANCE_DEBIT,
+    BALANCE_LABELS,
+    BALANCE_ZERO,
     delete_client,
-    search_clients,
-    update_client
+    get_clients_full,
+    update_client_field,
 )
+from ui.components.client_dialogs import ClientFormDialog
+from ui.components.client_picker import normalize_text
+from ui.components.invoice_utils import format_money
+from ui.components.list_page import ListPageBase
 
 
-class ClientsPage(ctk.CTkFrame):
-    def __init__(self, parent, app):
-        super().__init__(parent)
+def balance_text(client):
+    """نص الرصيد للعرض: «عليه 150.00 ₪» / «له 20.00 ₪» / «مسدّد»."""
+    state = client["balance_state"]
 
-        self.app = app
+    if state == BALANCE_ZERO:
+        return BALANCE_LABELS[BALANCE_ZERO]
 
-        self.selected_client_id = None
+    return f"{BALANCE_LABELS[state]} {format_money(abs(client['balance']))}"
 
-        self.client_map = {}
 
-        self.build_ui()
-        self.load_clients()
+class ClientsPage(ListPageBase):
+
+    TITLE = "👥 إدارة العملاء"
+    SUBTITLE = "بيانات العملاء وأرصدتهم وسجل فواتيرهم وكشوف حساباتهم"
+    HINT = (
+        "💡 انقر نقراً مزدوجاً على الاسم أو الهاتف أو البريد أو العنوان "
+        "أو الملاحظات لتعديلها مباشرة  ·  Enter لفتح صفحة العميل"
+    )
+    SEARCH_HINT = "🔍 ابحث بالاسم أو الهاتف أو البريد أو العنوان أو الملاحظات..."
+
+    SHOW_PERIOD = False
+    EDITABLE_COLUMNS = ("name", "phone", "email", "address", "notes")
+
+    COLUMNS = [
+        ("name", "اسم العميل", 180, "e"),
+        ("phone", "الهاتف", 105, "center"),
+        ("email", "البريد الإلكتروني", 150, "center"),
+        ("address", "العنوان", 130, "e"),
+        ("notes", "ملاحظات", 130, "e"),
+        ("invoices", "الفواتير", 62, "center"),
+        ("purchases", "إجمالي المشتريات", 115, "e"),
+        ("balance", "الرصيد", 120, "e"),
+    ]
+
+    STAT_CARDS = [
+        ("count", "👥 عدد العملاء", "#2563eb"),
+        ("purchases", "🛒 إجمالي المشتريات", "#0f2a5c"),
+        ("collected", "💰 إجمالي المحصّل", "#15803d"),
+        ("debit", "📌 مستحق على العملاء", "#b91c1c"),
+        ("credit", "🟣 أرصدة لصالح العملاء", "#7c3aed"),
+    ]
+
+    FILTER_OPTIONS = [
+        ("كل العملاء", None),
+        ("عليهم رصيد", BALANCE_DEBIT),
+        ("لهم رصيد", BALANCE_CREDIT),
+        ("مسدّدون", BALANCE_ZERO),
+    ]
+    FILTER_FIELD = "balance_state"
+    DATE_FIELD = "last_invoice_date"
+
+    EXPORT_NAME = "clients"
+    EXPORT_HEADERS = [
+        "الاسم", "الهاتف", "البريد الإلكتروني", "العنوان", "ملاحظات",
+        "عدد الفواتير", "إجمالي المشتريات", "المحصّل على الفواتير",
+        "المتبقي على الفواتير", "دفعات على الحساب", "الرصيد", "حالة الرصيد",
+    ]
 
     # ======================
-    # بناء الواجهة 
+    # البيانات
     # ======================
-    def build_ui(self):
+    def fetch_records(self):
+        return get_clients_full()
 
-        # العنوان
-        title = ctk.CTkLabel(
+    def row_values(self, c):
+        return {
+            "name": c["name"],
+            "phone": c["phone"],
+            "email": c["email"],
+            "address": c["address"],
+            "notes": c["notes"].replace("\n", " "),
+            "invoices": str(c["invoices_count"]),
+            "purchases": format_money(c["purchases"]),
+            "balance": balance_text(c),
+        }
+
+    def row_sort_values(self, c):
+        return {
+            "invoices": c["invoices_count"],
+            "purchases": c["purchases"],
+            "balance": c["balance"],
+        }
+
+    def search_blob(self, c):
+        return normalize_text(" ".join(
+            str(c[key])
+            for key in ("name", "phone", "email", "address", "notes")
+        ))
+
+    def filter_records(self, records):
+        # البحث يتجاهل التشكيل واختلاف الهمزات (مثل البحث الذكي)
+        tokens = normalize_text(self.search_var.get()).split()
+        wanted = self.current_filter_value()
+        result = []
+
+        for record in records:
+            if wanted is not None and record["balance_state"] != wanted:
+                continue
+
+            if tokens:
+                blob = self.search_blob(record)
+
+                if not all(token in blob for token in tokens):
+                    continue
+
+            result.append(record)
+
+        return result
+
+    def export_row(self, c):
+        return [
+            c["name"], c["phone"], c["email"], c["address"], c["notes"],
+            c["invoices_count"], c["purchases"], c["collected"],
+            c["remaining"], c["advance"], c["balance"],
+            BALANCE_LABELS[c["balance_state"]],
+        ]
+
+    def update_cards(self, filtered, everything):
+        self.set_card("count", str(len(filtered)),
+                      f"من أصل {len(everything)}")
+        self.set_card("purchases", format_money(
+            sum(c["purchases"] for c in filtered)))
+        self.set_card("collected", format_money(
+            sum(c["collected"] for c in filtered)))
+        self.set_card("debit", format_money(sum(
+            c["balance"] for c in filtered if c["balance"] > 0)))
+        self.set_card("credit", format_money(sum(
+            -c["balance"] for c in filtered if c["balance"] < 0)))
+
+    # ======================
+    # التعديل المباشر داخل الجدول
+    # ======================
+    def on_cell_edit(self, record, key, text):
+        cleaned = update_client_field(record["id"], key, text)
+        record[key] = cleaned
+        return cleaned.replace("\n", " ")
+
+    # ======================
+    # الأزرار
+    # ======================
+    def build_actions(self):
+        self.add_action("➕ عميل جديد", self.new_client, "green")
+        self.add_action("👤 تفاصيل العميل", self.open_details, "blue")
+        self.add_action("📒 كشف حساب", self.open_statement, "purple")
+        self.add_action("🧾 فاتورة جديدة", self.new_invoice, "blue")
+        self.add_action("💰 سند قبض", self.new_receipt, "green")
+        self.add_action("✏ تعديل (نافذة)", self.edit_selected, "orange")
+        self.add_action("🗑 حذف", self.delete_selected, "red")
+        self.add_action("📊 تصدير Excel", self.export_excel, "purple")
+        self.add_action("🔄 تحديث", self.refresh, "navy")
+
+    def build_context_menu(self, menu):
+        menu.add_command(label="👤 تفاصيل العميل", command=self.open_details)
+        menu.add_command(label="📒 كشف حساب", command=self.open_statement)
+        menu.add_separator()
+        menu.add_command(label="🧾 فاتورة جديدة", command=self.new_invoice)
+        menu.add_command(label="💰 سند قبض", command=self.new_receipt)
+        menu.add_separator()
+        menu.add_command(label="✏ تعديل (نافذة)", command=self.edit_selected)
+        menu.add_command(label="🗑 حذف", command=self.delete_selected)
+
+    def on_open_record(self, iid):
+        self.app.show_client_details(int(iid))
+
+    # ======================
+    # العمليات
+    # ======================
+    def _after_save(self, client_id):
+        self.refresh()
+        self.table.select([str(client_id)])
+
+    def new_client(self):
+        ClientFormDialog(self, on_done=self._after_save)
+
+    def edit_selected(self):
+        records = self.require_selection(single=True, what="عميل")
+
+        if records:
+            ClientFormDialog(
+                self, on_done=self._after_save, client=records[0]
+            )
+
+    def open_details(self, tab="invoices"):
+        records = self.require_selection(single=True, what="عميل")
+
+        if records:
+            self.app.show_client_details(records[0]["id"], tab=tab)
+
+    def open_statement(self):
+        self.open_details(tab="statement")
+
+    def new_invoice(self):
+        records = self.require_selection(single=True, what="عميل")
+
+        if not records:
+            return
+
+        name = records[0]["name"]
+
+        self.app.show_invoices()
+        self.app.pages["invoices"].client_var.set(name)
+
+    def new_receipt(self):
+        records = self.require_selection(single=True, what="عميل")
+
+        if not records:
+            return
+
+        from ui.receipts_page import ReceiptDialog
+
+        client_id = records[0]["id"]
+        ReceiptDialog(
             self,
-            text="👥 إدارة العملاء",
-            font=("Arial", 28, "bold")
-        )
-        title.pack(pady=20)
-
-        # ======================
-        # النموذج
-        # ======================
-        form_frame = ctk.CTkFrame(self)
-        form_frame.pack(fill="x", padx=20, pady=10)
-
-        # اسم العميل
-        self.name_entry = ctk.CTkEntry(
-            form_frame,
-            placeholder_text="اسم العميل",
-            width=250,
-            height=40
-        )
-        self.name_entry.grid(row=0, column=0, padx=10, pady=10)
-
-        # رقم الهاتف 
-        self.phone_entry = ctk.CTkEntry(
-            form_frame,
-            placeholder_text="رقم الهاتف",
-            width=250,
-            height=40
-        )
-        self.phone_entry.grid(row=0, column=1, padx=10, pady=10)
-
-        # زر إضافة
-        add_btn = ctk.CTkButton(
-            form_frame,
-            text="➕ إضافة عميل",
-            command=self.add_client_action,
-            height=40,
-            width=150,
-            fg_color="#16a34a",
-            hover_color="#15803d"
-        )
-        add_btn.grid(row=0, column=2, padx=10)
-
-        # زر تعديل
-        update_btn = ctk.CTkButton(
-            form_frame,
-            text="✏️ تعديل",
-            command=self.edit_client,
-            height=40,
-            width=120,
-            fg_color="#f59e0b",
-            hover_color="#d97706"
-        )
-        update_btn.grid(row=0, column=3, padx=10)
-
-        # زر حذف
-        delete_btn = ctk.CTkButton(
-            form_frame,
-            text="❌ حذف",
-            command=self.delete_client_action,
-            height=40,
-            width=120,
-            fg_color="#dc2626",
-            hover_color="#b91c1c"
-        )
-        delete_btn.grid(row=0, column=4, padx=10)
-
-        # ======================
-        # البحث
-        # ======================
-        search_frame = ctk.CTkFrame(self)
-        search_frame.pack(fill="x", padx=20, pady=10)
-
-        self.search_entry = ctk.CTkEntry(
-            search_frame,
-            placeholder_text="🔍 البحث باسم العميل أو رقم الهاتف",
-            height=45,
-            corner_radius=12,
-            font=("Cairo", 14)
-        )
-        self.search_entry.pack(fill="x", padx=10, pady=10)
-
-        self.search_entry.bind("<KeyRelease>", self.search_clients_action)
-
-        # ======================
-        # جدول العملاء
-        # ======================
-        table_frame = ctk.CTkFrame(self)
-        table_frame.pack(fill="both", expand=True, padx=20, pady=10)
-
-        columns = ("id", "name", "phone")
-
-        self.tree = ttk.Treeview(
-            table_frame,
-            columns=columns,
-            show="headings",
-            height=15
+            lambda _result: self._after_save(client_id),
+            client_name=records[0]["name"],
         )
 
-        self.tree.heading("id", text="ID")
-        self.tree.heading("name", text="اسم العميل")
-        self.tree.heading("phone", text="رقم الهاتف")
+    def delete_selected(self):
+        records = self.require_selection(what="عميل")
 
-        self.tree.column("name", width=300, anchor="center")
-        self.tree.column("phone", width=250, anchor="center")
+        if not records:
+            return
 
-        self.tree.pack(fill="both", expand=True, padx=10, pady=10)
+        names = "، ".join(r["name"] for r in records[:3])
 
-        # عند اختيار صف
-        self.tree.bind("<<TreeviewSelect>>", self.select_client)
+        if len(records) > 3:
+            names += f" و{len(records) - 3} آخرين"
 
-    # ======================
-    # تحميل العملاء 
-    # ======================
-    def load_clients(self):
+        if not messagebox.askyesno(
+            "تأكيد الحذف",
+            f"هل أنت متأكد من حذف {len(records)} عميل؟\n{names}",
+            parent=self,
+        ):
+            return
 
-        # حذف القديم
-        for item in self.tree.get_children():
-            self.tree.delete(item)
+        failures = []
 
-        clients = get_clients()
+        for record in records:
+            try:
+                delete_client(record["id"])
+            except ValueError as error:
+                failures.append(f"• {record['name']}: {error}")
 
-        for client in clients:
-            self.tree.insert(
-                "",
-                "end",
-                values=(
-                    client[0],
-                    client[1],
-                    client[2]
-                )
+        self.refresh()
+
+        if failures:
+            messagebox.showerror(
+                "لا يمكن حذف بعض العملاء", "\n\n".join(failures), parent=self
             )
-
-
-    # ======================
-    # إضافة عميل
-    # ======================
-    def add_client_action(self):
-
-        name = self.name_entry.get().strip()
-        phone = self.phone_entry.get().strip()
-
-        if not name:
-            messagebox.showerror("خطأ", "يرجى إدخال اسم العميل")
-            return
-
-        try:
-            add_client(name, phone)
-        except ValueError as e:
-            messagebox.showerror("خطأ", str(e))
-            return
-
-        self.clear_fields()
-        self.load_clients()
-
-        messagebox.showinfo("تم", "تم إضافة العميل بنجاح")
-
-    # ======================
-    # اختيار عميل
-    # ======================
-    def select_client(self, event):
-
-        selected = self.tree.selection()
-
-        if not selected:
-            return
-
-        values = self.tree.item(selected[0], "values")
-
-        self.selected_client_id = values[0]
-
-        self.name_entry.delete(0, "end")
-        self.name_entry.insert(0, values[1])
-
-        self.phone_entry.delete(0, "end")
-        self.phone_entry.insert(0, values[2])
-
-
-    # ======================
-    # ✏️ تعديل عميل 
-    # ======================
-    def edit_client(self):
-
-        if not self.selected_client_id:
-            messagebox.showerror("خطأ", "اختر عميل أولاً")
-            return
-
-        name = self.name_entry.get().strip()
-        phone = self.phone_entry.get().strip()
-
-        if not name:
-            messagebox.showerror("خطأ", "اسم العميل مطلوب")
-            return
-
-        try:
-            update_client(
-                self.selected_client_id,
-                name,
-                phone
-            )
-        except ValueError as e:
-            messagebox.showerror("خطأ", str(e))
-            return
-
-        self.load_clients()
-        self.clear_fields()
-
-        messagebox.showinfo("تم", "تم تعديل بيانات العميل")
-
-    # ======================
-    # حذف عميل
-    # ======================
-    def delete_client_action(self):
-
-        if not self.selected_client_id:
-            messagebox.showerror("خطأ", "اختر عميل أولاً")
-            return
-
-        confirm = messagebox.askyesno(
-            "تأكيد",
-            "هل أنت متأكد من حذف العميل؟"
-        )
-
-        if not confirm:
-            return
-
-        try:
-            delete_client(self.selected_client_id)
-        except ValueError as e:
-            messagebox.showerror("لا يمكن الحذف", str(e))
-            return
-
-        self.load_clients()
-        self.clear_fields()
-
-        messagebox.showinfo("تم", "تم حذف العميل")
-
-    # ======================
-    # 🔍 البحث عن عميل 
-    # ======================
-    def search_clients_action(self, event=None):
-
-        keyword = self.search_entry.get().strip()
-
-        if not keyword:
-            self.load_clients()
-            return
-
-        results = search_clients(keyword)
-
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-
-        for client in results:
-            self.tree.insert(
-                "",
-                "end",
-                values=(
-                    client[0],
-                    client[1],
-                    client[2]
-                )
-            )
-
-    # ======================
-    # تنظيف الحقول
-    # ======================
-    def clear_fields(self):
-
-        self.selected_client_id = None
-
-        self.name_entry.delete(0, "end")
-        self.phone_entry.delete(0, "end")
-    
-

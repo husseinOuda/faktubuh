@@ -12,6 +12,7 @@ from database import (
     delete_receipts,
     get_client_open_invoices,
     get_clients,
+    get_clients_full,
     get_invoice_info,
     get_receipt,
     get_receipt_invoice_summary,
@@ -37,7 +38,8 @@ _METHOD_BY_LABEL = {label: code for code, label in PAYMENT_METHODS.items()}
 # =====================================================
 class ReceiptDialog(FormDialog):
 
-    def __init__(self, parent, on_done, receipt=None, invoice_id=None):
+    def __init__(self, parent, on_done, receipt=None, invoice_id=None,
+                 client_name=None):
         self.receipt = receipt
 
         super().__init__(
@@ -46,11 +48,12 @@ class ReceiptDialog(FormDialog):
             on_done=on_done,
         )
 
-        clients = get_clients()
-        self.client_ids = {name: cid for cid, name, _phone in clients}
+        clients = get_clients_full()
+        self.client_ids = {c["name"]: c["id"] for c in clients}
 
-        # العميل المبدئي: من السند عند التعديل، أو من الفاتورة المحددة
-        initial_client = None
+        # العميل المبدئي: من السند عند التعديل، أو من الفاتورة المحددة،
+        # أو العميل المفتوح في صفحة تفاصيله (client_name)
+        initial_client = client_name
         initial_invoice_id = None
 
         if receipt:
@@ -64,9 +67,10 @@ class ReceiptDialog(FormDialog):
                 initial_client = info["client"]
                 initial_invoice_id = invoice_id
 
-        self.add_menu(
-            "client", "العميل", list(self.client_ids),
-            initial=initial_client, command=self._on_client_changed,
+        self.add_client_picker(
+            "client", "العميل", clients,
+            initial=initial_client or "",
+            on_change=self._on_client_changed,
         )
 
         self._invoice_map = {}
@@ -108,11 +112,15 @@ class ReceiptDialog(FormDialog):
         self.finish_layout()
 
     # ---- العميل والفواتير ----
+    def _client_id(self):
+        # الحقل بحث ذكي: التطابق يتجاهل التشكيل والهمزات، فنسأله مباشرة
+        return self._fields["client"][1].client_id()
+
     def _on_client_changed(self, _value=None):
         self._load_invoices(None)
 
     def _load_invoices(self, select_id):
-        client_id = self.client_ids.get(self.value("client"))
+        client_id = self._client_id()
 
         invoices = get_client_open_invoices(
             client_id,
@@ -144,7 +152,7 @@ class ReceiptDialog(FormDialog):
 
     # ---- الحفظ ----
     def save(self):
-        client_id = self.client_ids.get(self.value("client"))
+        client_id = self._client_id()
 
         if not client_id:
             raise ValueError("يرجى اختيار العميل")

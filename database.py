@@ -1,5 +1,6 @@
 # database.py
 
+import re
 import sqlite3
 import json
 import hashlib
@@ -120,7 +121,10 @@ def create_tables():
     CREATE TABLE IF NOT EXISTS clients (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT UNIQUE,
-        phone TEXT
+        phone TEXT,
+        address TEXT DEFAULT '',
+        email TEXT DEFAULT '',
+        notes TEXT DEFAULT ''
     )
     """)
 
@@ -223,21 +227,58 @@ def login(username, password):
 # العملاء
 # ======================
 
+# ======================
+# تنظيف وفحص بيانات العميل (0.1.8)
+# ======================
+CLIENT_FIELDS = ("name", "phone", "address", "email", "notes")
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _clean_client_field(field, value):
+    """يرجع القيمة المنظّفة أو يرفع ValueError برسالة عربية واضحة."""
+    text = str(value or "").strip()
+
+    if field == "name":
+        if not text:
+            raise ValueError("اسم العميل مطلوب")
+
+    elif field == "email":
+        if text and not _EMAIL_RE.match(text):
+            raise ValueError(
+                "صيغة البريد الإلكتروني غير صحيحة (مثال: name@example.com)"
+            )
+
+    elif field not in CLIENT_FIELDS:
+        raise ValueError("حقل غير معروف")
+
+    return text
+
+
 # ➕ إضافة عميل
 # ======================
-def add_client(name, phone, address=""):
+def add_client(name, phone="", address="", email="", notes=""):
+    """يضيف عميلاً ويرجع رقمه. يرفع ValueError عند التكرار أو بيانات خاطئة."""
+    name = _clean_client_field("name", name)
+    phone = _clean_client_field("phone", phone)
+    address = _clean_client_field("address", address)
+    email = _clean_client_field("email", email)
+    notes = _clean_client_field("notes", notes)
+
     try:
         with db_connection() as conn:
-            conn.execute(
-                "INSERT INTO clients (name, phone) VALUES (?, ?)",
-                (name, phone)
+            cursor = conn.execute(
+                "INSERT INTO clients (name, phone, address, email, notes) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (name, phone, address, email, notes)
             )
+            return cursor.lastrowid
 
     except sqlite3.IntegrityError:
         raise ValueError("اسم العميل موجود مسبقاً") from None
 
 
-# 📋 جلب العملاء
+# 📋 جلب العملاء (الشكل القديم: id, name, phone — تعتمد عليه صفحات أخرى)
 # ======================
 def get_clients():
     conn = connect()
@@ -309,21 +350,25 @@ def get_invoice_info(invoice_id):
 
     return dict(zip(keys, data))
 
-# 🔍 البحث عن العملاء
+# 🔍 البحث عن العملاء (الاسم / الهاتف / البريد / العنوان)
 # ======================
 def search_clients(keyword):
     conn = connect()
     cursor = conn.cursor()
+
+    like = f"%{keyword}%"
 
     cursor.execute(
         """
         SELECT id, name, phone
         FROM clients
         WHERE name LIKE ?
-        OR phone LIKE ?
+           OR phone LIKE ?
+           OR COALESCE(email, '') LIKE ?
+           OR COALESCE(address, '') LIKE ?
         ORDER BY id DESC
         """,
-        (f"%{keyword}%", f"%{keyword}%")
+        (like, like, like, like)
     )
 
     data = cursor.fetchall()
@@ -334,20 +379,56 @@ def search_clients(keyword):
 
 # ✏️ تعديل عميل
 # ======================
-def update_client(client_id, name, phone):
+def update_client(client_id, name, phone, address=None, email=None,
+                  notes=None):
+    """
+    تعديل بيانات العميل. الحقول التي قيمتها None تبقى كما هي
+    (فيبقى الاستدعاء القديم update_client(id, name, phone) صالحاً).
+    """
+    values = {
+        "name": _clean_client_field("name", name),
+        "phone": _clean_client_field("phone", phone),
+    }
+
+    for field, value in (("address", address), ("email", email),
+                         ("notes", notes)):
+        if value is not None:
+            values[field] = _clean_client_field(field, value)
+
+    assignments = ", ".join(f"{field}=?" for field in values)
+
     try:
         with db_connection() as conn:
             conn.execute(
-                """
-                UPDATE clients
-                SET name=?, phone=?
-                WHERE id=?
-                """,
-                (name, phone, client_id)
+                f"UPDATE clients SET {assignments} WHERE id=?",
+                (*values.values(), client_id)
             )
 
     except sqlite3.IntegrityError:
         raise ValueError("اسم العميل موجود مسبقاً") from None
+
+
+def update_client_field(client_id, field, value):
+    """
+    تعديل حقل واحد (للتعديل المباشر داخل الجدول).
+    يرجع القيمة بعد التنظيف.
+    """
+    if field not in CLIENT_FIELDS:
+        raise ValueError("هذا الحقل غير قابل للتعديل")
+
+    cleaned = _clean_client_field(field, value)
+
+    try:
+        with db_connection() as conn:
+            conn.execute(
+                f"UPDATE clients SET {field}=? WHERE id=?",
+                (cleaned, client_id)
+            )
+
+    except sqlite3.IntegrityError:
+        raise ValueError("اسم العميل موجود مسبقاً") from None
+
+    return cleaned
 
 
 # ❌ حذف عميل
@@ -386,6 +467,413 @@ def delete_client(client_id):
             "DELETE FROM clients WHERE id=?",
             (client_id,)
         )
+
+
+# ======================================================================
+# 0.1.8 — إدارة العملاء: الأرصدة، سجل الفواتير، كشف الحساب
+# ======================================================================
+#
+# تعريف الرصيد (موجب = على العميل · سالب = للعميل):
+#
+#     الرصيد = المتبقي على فواتيره غير الملغاة
+#              − الدفعات غير المطبّقة على فاتورة نشطة
+#
+#   الدفعات غير المطبّقة = سندات قبض فعّالة (دفعات على الحساب)
+#                          + سندات فعّالة مرتبطة بفاتورة صارت ملغاة.
+#   وهو يطابق ختام «كشف الحساب» تماماً، ويتّفق مع «ذمم العملاء» في اللوحة
+#   المالية عندما لا توجد دفعات مقدّمة.
+
+BALANCE_DEBIT = "debit"      # عليه (مدين)
+BALANCE_CREDIT = "credit"    # له (دائن)
+BALANCE_ZERO = "zero"        # مسدّد
+
+BALANCE_LABELS = {
+    BALANCE_DEBIT: "عليه",
+    BALANCE_CREDIT: "له",
+    BALANCE_ZERO: "مسدّد",
+}
+
+
+def balance_state(balance):
+    balance = _money(balance)
+
+    if balance > _EPS:
+        return BALANCE_DEBIT
+
+    if balance < -_EPS:
+        return BALANCE_CREDIT
+
+    return BALANCE_ZERO
+
+
+def _empty_financials():
+    return {
+        "invoices_count": 0,
+        "cancelled_count": 0,
+        "archived_count": 0,
+        "purchases": 0.0,
+        "collected": 0.0,
+        "remaining": 0.0,
+        "advance": 0.0,
+        "balance": 0.0,
+        "balance_state": BALANCE_ZERO,
+        "last_invoice_date": "",
+        "last_receipt_date": "",
+    }
+
+
+def _client_financials(conn, client_id=None):
+    """
+    {client_id: ملخّص مالي} لكل العملاء، أو لعميل واحد.
+    استعلامان فقط مهما كان عدد العملاء.
+    """
+    scope = "" if client_id is None else "AND i.client_id = ?"
+    params = () if client_id is None else (client_id,)
+
+    invoice_rows = conn.execute(
+        f"""
+        SELECT
+            i.client_id, i.total, COALESCE(i.status, 'unpaid'),
+            COALESCE(i.paid_by_receipts, 0), COALESCE(i.archived, 0),
+            COALESCE(i.date, ''),
+            COALESCE((
+                SELECT SUM(r.amount) FROM receipts r
+                WHERE r.invoice_id = i.id
+                  AND COALESCE(r.status, 'active') = 'active'
+            ), 0)
+        FROM invoices i
+        WHERE i.client_id IS NOT NULL {scope}
+        """,
+        params
+    ).fetchall()
+
+    result = {}
+
+    def entry_for(cid):
+        return result.setdefault(cid, _empty_financials())
+
+    for cid, total, status, flag, archived, date, collected in invoice_rows:
+        entry = entry_for(cid)
+
+        if status == STATUS_CANCELLED:
+            entry["cancelled_count"] += 1
+            # ما حصّلناه على فاتورة صارت ملغاة يبقى رصيداً للعميل
+            entry["advance"] += _money(collected)
+            continue
+
+        remaining = _invoice_remaining(total, status, flag, collected)
+
+        entry["invoices_count"] += 1
+        entry["archived_count"] += 1 if archived else 0
+        entry["purchases"] += _money(total)
+        entry["remaining"] += remaining
+
+        if date > entry["last_invoice_date"]:
+            entry["last_invoice_date"] = date
+
+    receipt_scope = "" if client_id is None else "AND r.client_id = ?"
+
+    for cid, amount, last_date in conn.execute(
+        f"""
+        SELECT r.client_id, SUM(r.amount), MAX(COALESCE(r.date, ''))
+        FROM receipts r
+        WHERE r.invoice_id IS NULL
+          AND COALESCE(r.status, 'active') = 'active'
+          {receipt_scope}
+        GROUP BY r.client_id
+        """,
+        params
+    ).fetchall():
+        entry = entry_for(cid)
+        entry["advance"] += _money(amount)
+
+    for cid, last_date in conn.execute(
+        f"""
+        SELECT r.client_id, MAX(COALESCE(r.date, ''))
+        FROM receipts r
+        WHERE COALESCE(r.status, 'active') = 'active' {receipt_scope}
+        GROUP BY r.client_id
+        """,
+        params
+    ).fetchall():
+        entry_for(cid)["last_receipt_date"] = last_date
+
+    for entry in result.values():
+        entry["purchases"] = _money(entry["purchases"])
+        entry["remaining"] = _money(entry["remaining"])
+        entry["advance"] = _money(entry["advance"])
+        entry["collected"] = _money(entry["purchases"] - entry["remaining"])
+        entry["balance"] = _money(entry["remaining"] - entry["advance"])
+        entry["balance_state"] = balance_state(entry["balance"])
+
+    return result
+
+
+_CLIENT_SELECT = (
+    "SELECT id, name, COALESCE(phone, ''), COALESCE(address, ''), "
+    "COALESCE(email, ''), COALESCE(notes, '') FROM clients"
+)
+
+
+def _client_dict(row, financials):
+    data = dict(zip(("id", "name", "phone", "address", "email", "notes"), row))
+    data.update(financials.get(data["id"]) or _empty_financials())
+    return data
+
+
+def get_clients_full():
+    """كل العملاء بكامل بياناتهم وملخصهم المالي (الأحدث أولاً)."""
+    conn = connect()
+
+    try:
+        rows = conn.execute(_CLIENT_SELECT + " ORDER BY id DESC").fetchall()
+        financials = _client_financials(conn)
+    finally:
+        conn.close()
+
+    return [_client_dict(row, financials) for row in rows]
+
+
+def get_client(client_id):
+    """عميل واحد بكامل بياناته وملخصه المالي، أو None."""
+    conn = connect()
+
+    try:
+        row = conn.execute(
+            _CLIENT_SELECT + " WHERE id = ?", (client_id,)
+        ).fetchone()
+
+        if not row:
+            return None
+
+        financials = _client_financials(conn, client_id)
+    finally:
+        conn.close()
+
+    return _client_dict(row, financials)
+
+
+def get_client_invoices(client_id, archived=None):
+    """
+    سجل فواتير العميل (الأحدث أولاً) مع المحصّل والمتبقي.
+    archived: None = الكل · False = النشطة · True = أرشيف العميل.
+    """
+    conn = connect()
+
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                i.id, i.invoice_number, COALESCE(i.date, ''),
+                COALESCE(i.subtotal, i.total), COALESCE(i.discount_amount, 0),
+                COALESCE(i.tax_amount, 0), COALESCE(i.total, 0),
+                COALESCE(i.notes, ''), COALESCE(i.status, 'unpaid'),
+                COALESCE(i.archived, 0),
+                COALESCE((
+                    SELECT SUM(r.amount) FROM receipts r
+                    WHERE r.invoice_id = i.id
+                      AND COALESCE(r.status, 'active') = 'active'
+                ), 0)
+            FROM invoices i
+            WHERE i.client_id = ?
+            ORDER BY i.date DESC, i.id DESC
+            """,
+            (client_id,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+    keys = ("id", "invoice_number", "date", "subtotal", "discount_amount",
+            "tax_amount", "total", "notes", "status", "archived", "_coll")
+    invoices = []
+
+    for row in rows:
+        invoice = dict(zip(keys, row))
+        invoice["archived"] = int(invoice["archived"] or 0)
+
+        if archived is not None and bool(invoice["archived"]) != bool(archived):
+            continue
+
+        collected, remaining = _collected_and_remaining(
+            invoice["total"], invoice["status"], invoice.pop("_coll")
+        )
+        invoice["collected"] = collected
+        invoice["remaining"] = remaining
+        invoices.append(invoice)
+
+    return invoices
+
+
+def get_client_receipts(client_id):
+    """سندات قبض العميل (الأحدث أولاً)."""
+    conn = connect()
+
+    try:
+        rows = conn.execute(
+            _RECEIPT_SELECT
+            + " WHERE r.client_id = ? ORDER BY r.date DESC, r.id DESC",
+            (client_id,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+    return [_receipt_dict(row) for row in rows]
+
+
+_KIND_ORDER = {"invoice": 0, "manual": 1, "receipt": 2}
+
+
+def get_client_statement(client_id, start=None, end=None,
+                         include_cancelled=True):
+    """
+    كشف حساب العميل بالتسلسل الزمني.
+
+    يرجع قاموساً:
+      opening        الرصيد الافتتاحي (قبل start)
+      rows           [{date, kind, ref, description, debit, credit, balance,
+                       invoice_id, receipt_id, cancelled}]
+      total_debit / total_credit   مجاميع الفترة
+      closing        الرصيد الختامي (موجب = على العميل)
+      state          debit | credit | zero
+
+    الأنواع: invoice (فاتورة، مدين) · receipt (سند قبض، دائن) ·
+             manual (فاتورة حُدّدت «مدفوعة» يدوياً بلا سندات، دائن).
+    الفواتير والسندات الملغاة تظهر بقيمة صفر وعلامة cancelled.
+    """
+    client = get_client(client_id)
+
+    if not client:
+        raise ValueError("العميل غير موجود")
+
+    conn = connect()
+
+    try:
+        invoice_rows = conn.execute(
+            """
+            SELECT
+                i.id, i.invoice_number, COALESCE(i.date, ''), i.total,
+                COALESCE(i.status, 'unpaid'),
+                COALESCE(i.paid_by_receipts, 0),
+                COALESCE((
+                    SELECT SUM(r.amount) FROM receipts r
+                    WHERE r.invoice_id = i.id
+                      AND COALESCE(r.status, 'active') = 'active'
+                ), 0)
+            FROM invoices i
+            WHERE i.client_id = ?
+            """,
+            (client_id,)
+        ).fetchall()
+
+        receipt_rows = conn.execute(
+            """
+            SELECT
+                r.id, r.receipt_number, COALESCE(r.date, ''), r.amount,
+                COALESCE(r.status, 'active'), i.invoice_number,
+                COALESCE(r.payment_method, 'cash'), COALESCE(r.notes, '')
+            FROM receipts r
+            LEFT JOIN invoices i ON i.id = r.invoice_id
+            WHERE r.client_id = ?
+            """,
+            (client_id,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+    entries = []
+
+    for inv_id, number, date, total, status, flag, collected in invoice_rows:
+        if status == STATUS_CANCELLED:
+            if include_cancelled:
+                entries.append({
+                    "date": date, "kind": "invoice", "ref": number,
+                    "description": "فاتورة ملغاة", "debit": 0.0,
+                    "credit": 0.0, "invoice_id": inv_id, "receipt_id": None,
+                    "cancelled": True, "_id": inv_id,
+                })
+            continue
+
+        entries.append({
+            "date": date, "kind": "invoice", "ref": number,
+            "description": "فاتورة مبيعات", "debit": _money(total),
+            "credit": 0.0, "invoice_id": inv_id, "receipt_id": None,
+            "cancelled": False, "_id": inv_id,
+        })
+
+        manual = _money(total) - _money(collected)
+
+        if status == STATUS_PAID and not flag and manual > _EPS:
+            entries.append({
+                "date": date, "kind": "manual", "ref": number,
+                "description": "تسديد الفاتورة (حُدّدت مدفوعة يدوياً)",
+                "debit": 0.0, "credit": _money(manual),
+                "invoice_id": inv_id, "receipt_id": None,
+                "cancelled": False, "_id": inv_id,
+            })
+
+    for rec_id, number, date, amount, status, inv_number, method, notes \
+            in receipt_rows:
+        cancelled = status == VOUCHER_CANCELLED
+
+        if cancelled and not include_cancelled:
+            continue
+
+        text = (
+            f"سند قبض عن فاتورة {inv_number}" if inv_number
+            else "سند قبض — دفعة على الحساب"
+        )
+
+        if cancelled:
+            text = text.replace("سند قبض", "سند قبض ملغى", 1)
+
+        entries.append({
+            "date": date, "kind": "receipt", "ref": number,
+            "description": text,
+            "debit": 0.0,
+            "credit": 0.0 if cancelled else _money(amount),
+            "invoice_id": None, "receipt_id": rec_id,
+            "cancelled": cancelled, "_id": rec_id,
+        })
+
+    entries.sort(key=lambda e: (e["date"], _KIND_ORDER[e["kind"]], e["_id"]))
+
+    opening = 0.0
+    rows = []
+
+    for entry in entries:
+        date = entry["date"]
+
+        if start and date < start:
+            opening += entry["debit"] - entry["credit"]
+            continue
+
+        if end and date > end:
+            continue
+
+        rows.append(entry)
+
+    opening = _money(opening)
+    running = opening
+    total_debit = total_credit = 0.0
+
+    for entry in rows:
+        running = _money(running + entry["debit"] - entry["credit"])
+        entry["balance"] = running
+        entry.pop("_id", None)
+        total_debit += entry["debit"]
+        total_credit += entry["credit"]
+
+    return {
+        "client": client,
+        "start": start,
+        "end": end,
+        "opening": opening,
+        "rows": rows,
+        "total_debit": _money(total_debit),
+        "total_credit": _money(total_credit),
+        "closing": running,
+        "state": balance_state(running),
+    }
 
 
 # ======================
@@ -807,6 +1295,10 @@ def migrate_database():
         cursor = conn.cursor()
 
         _add_column_if_missing(cursor, "clients", "phone", "TEXT")
+        # 0.1.8 — بيانات العميل الموسّعة
+        _add_column_if_missing(cursor, "clients", "address", "TEXT DEFAULT ''")
+        _add_column_if_missing(cursor, "clients", "email", "TEXT DEFAULT ''")
+        _add_column_if_missing(cursor, "clients", "notes", "TEXT DEFAULT ''")
         _add_column_if_missing(cursor, "invoices", "items", "TEXT")
         _add_column_if_missing(cursor, "invoices", "invoice_number", "TEXT")
         _add_column_if_missing(cursor, "invoices", "subtotal", "REAL DEFAULT 0")

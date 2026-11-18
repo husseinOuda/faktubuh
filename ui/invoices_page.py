@@ -13,7 +13,9 @@ from pdf_generator import (
 )
 
 from database import (
+    get_client,
     get_clients,
+    get_clients_full,
     save_invoice,
     get_invoices,
     delete_invoice,
@@ -26,6 +28,8 @@ from database import (
 
 from theme import ENTRY_STYLE, PRIMARY_BTN, BRAND_NAVY, BRAND_LIGHT, TABLE_GRID
 
+from ui.components.client_dialogs import ClientFormDialog
+from ui.components.client_picker import ClientPicker
 from ui.components.pdf_preview import PDFPreviewWindow
 from ui.components.tables import (
     STYLE_NAME,
@@ -139,23 +143,32 @@ class InvoicesPage(ctk.CTkFrame):
 
         self.client_var = ctk.StringVar()
 
-        clients = get_clients()
+        clients = get_clients_full()
 
         self.client_map = {
-            name: cid for cid, name, phone in clients
+            client["name"]: client["id"] for client in clients
         }
 
-        client_names = list(self.client_map.keys())
-
-        self.client_combo = ctk.CTkComboBox(
+        # بحث ذكي (Autocomplete) بدل القائمة المنسدلة القديمة
+        self.client_picker = ClientPicker(
             clients_frame,
-            values=client_names,
-            variable=self.client_var,
-            width=350,
-            height=40
+            textvariable=self.client_var,
+            on_change=self.on_client_changed,
+            on_add_new=self.open_add_client_window,
+            width=300,
+            height=40,
         )
+        self.client_picker.set_clients(clients)
+        self.client_picker.pack(padx=10, pady=5, fill="x")
 
-        self.client_combo.pack(padx=10, pady=5)
+        # رصيد العميل المختار
+        self.client_balance_label = ctk.CTkLabel(
+            clients_frame,
+            text="",
+            font=("Cairo", 12, "bold"),
+            text_color="#6b7280",
+        )
+        self.client_balance_label.pack(padx=10)
 
         ctk.CTkButton(
             clients_frame,
@@ -1262,7 +1275,7 @@ class InvoicesPage(ctk.CTkFrame):
             return
 
         client_name = self.client_var.get().strip()
-        client_id = self.client_map.get(client_name)
+        client_id = self.client_picker.client_id()
 
         if not client_id:
             messagebox.showerror(
@@ -1585,96 +1598,67 @@ class InvoicesPage(ctk.CTkFrame):
             )
 
     # ======================
-    # نافذة إضافة عميل
+    # نافذة إضافة عميل (الاسم، الهاتف، البريد، العنوان، ملاحظات)
     # ======================
-    def open_add_client_window(self):
+    def open_add_client_window(self, name=""):
 
-        window = ctk.CTkToplevel(self)
-        window.title("إضافة عميل")
-        window.geometry("400x250")
-
-        # الاسم
-        name_entry = ctk.CTkEntry(
-            window,
-            placeholder_text="اسم العميل",
-            width=300,
-            **ENTRY_STYLE
+        ClientFormDialog(
+            self,
+            on_done=self.after_client_added,
+            name=name if isinstance(name, str) else "",
         )
-        name_entry.pack(pady=20)
 
-        # الهاتف
-        phone_entry = ctk.CTkEntry(
-            window,
-            placeholder_text="رقم الهاتف",
-            width=300,
-            **ENTRY_STYLE
-        )
-        phone_entry.pack(pady=10)
+    def after_client_added(self, client_id):
 
-        # زر الحفظ
-        ctk.CTkButton(
-            window,
-            text="💾 حفظ العميل",
-            command=lambda: self.save_new_client(
-                window,
-                name_entry.get(),
-                phone_entry.get()
-            ),
-            **PRIMARY_BTN
-        ).pack(pady=20)
-                
+        client = get_client(client_id)
 
-    # ======================
-    # حفظ العميل الجديد
-    # ======================
-    def save_new_client(self, window, name, phone):
-
-        name = name.strip()
-        phone = phone.strip()
-
-        if not name:
-            messagebox.showerror(
-                "خطأ",
-                "يرجى إدخال اسم العميل"
-            )
-            return
-
-        # حفظ العميل
-        try:
-            add_client(name, phone)
-        except ValueError as e:
-            messagebox.showerror("خطأ", str(e))
-            return
-
-        # تحديث العملاء
+        # تحديث العملاء واختيار العميل الجديد تلقائياً
         self.refresh_clients_list()
 
-        # اختيار العميل الجديد تلقائياً
-        self.client_var.set(name)
+        if client:
+            self.client_var.set(client["name"])
 
         messagebox.showinfo(
             "تم",
             "تم إضافة العميل بنجاح"
         )
 
-        window.destroy()
-
     # ======================
     # تحديث قائمة العملاء
     # ======================
     def refresh_clients_list(self):
 
-        clients = get_clients()
+        clients = get_clients_full()
 
         self.client_map = {
-            name: cid for cid, name, phone in clients
+            client["name"]: client["id"] for client in clients
         }
 
-        client_names = list(self.client_map.keys())
+        self.client_picker.set_clients(clients)
+        self.on_client_changed(self.client_picker.client())
 
-        self.client_combo.configure(
-            values=client_names
-        )        
+    # ======================
+    # عند تغيّر العميل المختار: عرض رصيده
+    # ======================
+    def on_client_changed(self, client):
+
+        if not client:
+            self.client_balance_label.configure(text="")
+            return
+
+        balance = float(client.get("balance") or 0)
+        state = client.get("balance_state", "zero")
+
+        if state == "zero":
+            text, color = "الرصيد: مسدّد ✔", "#15803d"
+        elif state == "debit":
+            text = f"الرصيد: عليه {format_money(abs(balance))}"
+            color = "#b91c1c"
+        else:
+            text = f"الرصيد: له {format_money(abs(balance))}"
+            color = "#15803d"
+
+        self.client_balance_label.configure(text=text, text_color=color)
 
     # ======================
     # تنظيف الحقول

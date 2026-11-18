@@ -170,6 +170,26 @@ class FormDialog(ctk.CTkToplevel):
         self._fields[key] = ("menu", menu, var)
         return menu
 
+    def add_client_picker(self, key, label, clients, initial="",
+                          on_change=None, on_add_new=None):
+        """حقل اختيار عميل ببحث ذكي (يُقرأ بـ value(key) كاسم العميل)."""
+        from ui.components.client_picker import ClientPicker
+
+        self._add_label(label)
+
+        var = ctk.StringVar(value=initial or "")
+        picker = ClientPicker(
+            self.body, textvariable=var,
+            on_change=on_change, on_add_new=on_add_new,
+        )
+        picker.grid(row=self._row, column=0, sticky="ew")
+        self._row += 1
+
+        picker.set_clients(clients)
+
+        self._fields[key] = ("picker", picker, var)
+        return picker
+
     def add_textbox(self, key, label, initial="", height=72):
         self._add_label(label)
 
@@ -219,6 +239,9 @@ class FormDialog(ctk.CTkToplevel):
 
         if kind == "text":
             return widget.get("1.0", "end").strip()
+
+        if kind == "picker":
+            return var.get().strip()
 
         return var.get()
 
