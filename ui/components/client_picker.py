@@ -107,6 +107,11 @@ class ClientPicker(ctk.CTkFrame):
     MAX_ROWS = 7
     ROW_HEIGHT = 34
 
+    # نصوص قابلة للتخصيص (يرثها SupplierPicker في الموردين)
+    ADD_LABEL = "➕ إضافة «{name}» كعميل جديد"
+    DEBIT_LABEL = "عليه"
+    CREDIT_LABEL = "له"
+
     def __init__(self, parent, textvariable=None, on_select=None,
                  on_add_new=None, on_change=None, width=350, height=40,
                  placeholder=PLACEHOLDER, font=("Cairo", 14)):
@@ -398,7 +403,7 @@ class ClientPicker(ctk.CTkFrame):
 
         if isinstance(item, tuple) and item[0] == "add":
             label = tk.Label(
-                row, text=f"➕ إضافة «{item[1]}» كعميل جديد",
+                row, text=self.ADD_LABEL.format(name=item[1]),
                 bg=_BG, fg=_ADD, font=("Cairo", 12, "bold"), anchor="e",
             )
             label.pack(side="right", fill="x", expand=True, padx=10)
@@ -428,8 +433,9 @@ class ClientPicker(ctk.CTkFrame):
 
         if state in ("debit", "credit") and balance:
             text = (
-                f"عليه {format_money(abs(balance))}" if state == "debit"
-                else f"له {format_money(abs(balance))}"
+                f"{self.DEBIT_LABEL} {format_money(abs(balance))}"
+                if state == "debit"
+                else f"{self.CREDIT_LABEL} {format_money(abs(balance))}"
             )
             balance_label = tk.Label(
                 row, text=text, bg=_BG,

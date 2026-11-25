@@ -446,6 +446,9 @@ def generate_payment_voucher_pdf(voucher, summary=None, file_path=None):
             False,
         ))
 
+    if voucher.get("po_number"):
+        rows.append(("عن أمر شراء رقم", voucher["po_number"], False))
+
     if voucher.get("category") and voucher["category"] != "غير مصنف":
         rows.append(("التصنيف", voucher["category"], False))
 
@@ -456,7 +459,8 @@ def generate_payment_voucher_pdf(voucher, summary=None, file_path=None):
 
     if summary:
         summary_cells = [
-            ("إجمالي المصروف", summary["total"], None),
+            ("إجمالي أمر الشراء" if voucher.get("po_number")
+             else "إجمالي المصروف", summary["total"], None),
             ("إجمالي المدفوع", summary["paid"], _OK_COLOR),
             ("المتبقي", summary["remaining"],
              _BAD_COLOR if summary["remaining"] > 0.005 else _OK_COLOR),

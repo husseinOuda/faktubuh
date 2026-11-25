@@ -459,6 +459,14 @@ class _StatementTab(ctk.CTkFrame):
 
     KIND_TEXT = {"invoice": "فاتورة", "receipt": "سند قبض", "manual": "تسديد"}
 
+    # بطاقات الملخص (يعيد تعريفها كشف حساب المورد)
+    CARDS = [
+        ("opening", "↩ الرصيد الافتتاحي", _NAVY),
+        ("debit", "📄 إجمالي المدين (فواتير)", _RED),
+        ("credit", "💰 إجمالي الدائن (مقبوضات)", _GREEN),
+        ("closing", "📒 الرصيد الختامي", _NAVY),
+    ]
+
     def __init__(self, parent, app, client_id):
         super().__init__(parent, fg_color="transparent")
 
@@ -536,12 +544,7 @@ class _StatementTab(ctk.CTkFrame):
 
         self.cards = {}
 
-        for index, (key, title, color) in enumerate([
-            ("opening", "↩ الرصيد الافتتاحي", _NAVY),
-            ("debit", "📄 إجمالي المدين (فواتير)", _RED),
-            ("credit", "💰 إجمالي الدائن (مقبوضات)", _GREEN),
-            ("closing", "📒 الرصيد الختامي", _NAVY),
-        ]):
+        for index, (key, title, color) in enumerate(self.CARDS):
             frame.grid_columnconfigure(index, weight=1, uniform="stcards")
             card = StatCard(frame, title, "0.00", color)
             card.grid(row=0, column=index, padx=5, sticky="ew")
@@ -595,6 +598,14 @@ class _StatementTab(ctk.CTkFrame):
         return values[0], values[1]
 
     # ---- البيانات ----
+    def _fetch_statement(self, start, end, include_cancelled):
+        return get_client_statement(
+            self.client_id, start, end, include_cancelled=include_cancelled
+        )
+
+    def signed_text(self, amount, state=None):
+        return _signed_text(amount, state)
+
     def reload(self):
         try:
             start, end = self._range()
@@ -603,9 +614,8 @@ class _StatementTab(ctk.CTkFrame):
             return
 
         try:
-            self.statement = get_client_statement(
-                self.client_id, start, end,
-                include_cancelled=self.cancelled_var.get() == "on",
+            self.statement = self._fetch_statement(
+                start, end, self.cancelled_var.get() == "on"
             )
         except ValueError as error:
             messagebox.showerror("خطأ", str(error), parent=self)
@@ -622,7 +632,7 @@ class _StatementTab(ctk.CTkFrame):
                     "date": st["start"] or "",
                     "kind": "—",
                     "description": "رصيد افتتاحي (مُرحَّل)",
-                    "balance": _signed_text(st["opening"]),
+                    "balance": self.signed_text(st["opening"]),
                 },
                 "tags": ("opening",),
             })
@@ -640,7 +650,7 @@ class _StatementTab(ctk.CTkFrame):
                     "description": entry["description"],
                     "debit": format_money(entry["debit"]) if entry["debit"] else "",
                     "credit": format_money(entry["credit"]) if entry["credit"] else "",
-                    "balance": _signed_text(entry["balance"]),
+                    "balance": self.signed_text(entry["balance"]),
                 },
                 "tags": ("cancelled",) if entry["cancelled"] else (),
                 "sort": {
@@ -653,13 +663,13 @@ class _StatementTab(ctk.CTkFrame):
         self.table.set_rows(rows)
 
         self.cards["opening"].set(
-            _signed_text(st["opening"]),
+            self.signed_text(st["opening"]),
             color=_STATE_COLORS[self._state(st["opening"])],
         )
         self.cards["debit"].set(format_money(st["total_debit"]))
         self.cards["credit"].set(format_money(st["total_credit"]))
         self.cards["closing"].set(
-            _signed_text(st["closing"], st["state"]),
+            self.signed_text(st["closing"], st["state"]),
             f"{len(st['rows'])} حركة",
             color=_STATE_COLORS[st["state"]],
         )
@@ -736,7 +746,7 @@ class _StatementTab(ctk.CTkFrame):
         if not st:
             return
 
-        headers = ["التاريخ", "النوع", "المستند", "البيان", "مدين", "دائن", "الرصيد"]
+        headers = [column[1] for column in self.COLUMNS]
         rows = []
 
         if st["start"] or abs(st["opening"]) > 0.005:

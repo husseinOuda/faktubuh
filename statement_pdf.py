@@ -1,6 +1,7 @@
 # statement_pdf.py
 """
-كشف حساب العميل PDF (A4) بنفس هوية الفاتورة وسندات القبض:
+كشف حساب العميل أو المورد PDF (A4) بنفس هوية الفاتورة وسندات القبض
+(statement["party"] = "client" افتراضياً أو "supplier" لحساب المورد):
 
   ترويسة بالشعار ← بيانات العميل وبيانات الكشف ← شريط ملخص (افتتاحي، مدين،
   دائن، ختامي) ← جدول الحركات برصيد تراكمي ← الرصيد المستحق رقماً وكتابةً
@@ -65,8 +66,51 @@ _RED = colors.HexColor("#b91c1c")
 _GREEN = colors.HexColor("#15803d")
 _GREY = colors.HexColor("#9ca3af")
 
-_STATE_TEXT = {"debit": "عليه", "credit": "له", "zero": "مسدّد"}
-_KIND_TEXT = {"invoice": "فاتورة", "receipt": "سند قبض", "manual": "تسديد"}
+# نصوص الكشف حسب الطرف: العميل (افتراضي) أو المورد
+_LABELS = {
+    "client": {
+        "state": {"debit": "عليه", "credit": "له", "zero": "مسدّد"},
+        "kind": {"invoice": "فاتورة", "receipt": "سند قبض", "manual": "تسديد"},
+        "box": "بيانات العميل",
+        "debit_head": "مدين",
+        "credit_head": "دائن",
+        "sum_debit": "إجمالي المدين (فواتير)",
+        "sum_credit": "إجمالي الدائن (مقبوضات)",
+        "banner": {
+            "debit": "الرصيد المستحق على العميل",
+            "credit": "الرصيد المستحق للعميل",
+            "zero": "الحساب مسدّد — لا يوجد رصيد مستحق",
+        },
+        "sign_party": "اعتماد العميل",
+        "qr_party": "Client",
+        "file": "statement",
+    },
+    "supplier": {
+        "state": {"debit": "مستحق", "credit": "مقدّم", "zero": "مسدّد"},
+        "kind": {"purchase": "أمر شراء", "payment": "سند صرف"},
+        "box": "بيانات المورد",
+        "debit_head": "مشتريات",
+        "credit_head": "مدفوعات",
+        "sum_debit": "إجمالي المشتريات",
+        "sum_credit": "إجمالي المدفوعات",
+        "banner": {
+            "debit": "الرصيد المستحق للمورد",
+            "credit": "دفعة مقدّمة لدى المورد",
+            "zero": "الحساب مسدّد — لا يوجد رصيد مستحق",
+        },
+        "sign_party": "اعتماد المورد",
+        "qr_party": "Supplier",
+        "file": "supplier_statement",
+    },
+}
+
+
+def _party(statement):
+    return statement.get("party") or "client"
+
+
+def _lab(statement):
+    return _LABELS[_party(statement)]
 
 # عروض الأعمدة من اليسار لليمين: الرصيد | دائن | مدين | البيان | المستند | التاريخ | #
 _COLS = [86, 72, 72, 124, 78, 63, 28]
@@ -76,13 +120,13 @@ def _p(text, style):
     return Paragraph(escape(fix_arabic(str(text or ""))), style)
 
 
-def _signed(amount, with_state=True):
+def _signed(amount, with_state=True, party="client"):
     """رصيد للعرض: القيمة المطلقة + (عليه/له)."""
     state = "debit" if amount > 0.005 else "credit" if amount < -0.005 else "zero"
     text = format_money(abs(amount), symbol=False)
 
     if with_state and state != "zero":
-        text = f"{text} {_STATE_TEXT[state]}"
+        text = f"{text} {_LABELS[party]['state'][state]}"
 
     return text, state
 
@@ -136,7 +180,8 @@ def _info_section(statement, issued):
     inner.setStyle(_plain_table_style([("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
 
     client_box = Table(
-        [[Paragraph(fix_arabic("بيانات العميل"), ST_BOX_TITLE)], [inner]],
+        [[Paragraph(fix_arabic(_lab(statement)["box"]), ST_BOX_TITLE)],
+         [inner]],
         colWidths=[box_w],
     )
     client_box.setStyle(TableStyle([
@@ -198,14 +243,16 @@ def _info_section(statement, issued):
 
 def _summary_strip(statement):
     """أربع خانات من اليمين: افتتاحي | مدين | دائن | ختامي."""
-    opening_text, opening_state = _signed(statement["opening"])
-    closing_text, closing_state = _signed(statement["closing"])
+    party = _party(statement)
+    lab = _lab(statement)
+    opening_text, opening_state = _signed(statement["opening"], party=party)
+    closing_text, closing_state = _signed(statement["closing"], party=party)
 
     cells = [
         ("الرصيد الافتتاحي", opening_text, _state_color(opening_state)),
-        ("إجمالي المدين (فواتير)",
+        (lab["sum_debit"],
          format_money(statement["total_debit"], symbol=False), C_NAVY),
-        ("إجمالي الدائن (مقبوضات)",
+        (lab["sum_credit"],
          format_money(statement["total_credit"], symbol=False), _GREEN),
         ("الرصيد الختامي", closing_text, _state_color(closing_state)),
     ]
@@ -247,11 +294,13 @@ def _movements_table(statement):
     cell_num = _style("st_cell_num", 9, align=2)
     cell_grey = _style("st_cell_g", 9, color=_GREY)
     desc_w = _COLS[3] - 14
+    party = _party(statement)
+    lab = _lab(statement)
 
     header = [
         Paragraph(fix_arabic(title), ST_HEAD)
-        for title in ("الرصيد", "دائن", "مدين", "البيان", "المستند",
-                      "التاريخ", "#")
+        for title in ("الرصيد", lab["credit_head"], lab["debit_head"],
+                      "البيان", "المستند", "التاريخ", "#")
     ]
     data = [header]
     style = [
@@ -277,7 +326,7 @@ def _movements_table(statement):
         )
 
     def balance_cell(amount, muted=False):
-        text, state = _signed(amount)
+        text, state = _signed(amount, party=party)
         color = _GREY if muted else _state_color(state)
         return Paragraph(
             escape(fix_arabic(text)),
@@ -302,7 +351,7 @@ def _movements_table(statement):
         muted = entry["cancelled"]
         text_style = cell_grey if muted else cell
 
-        ref = f"{_KIND_TEXT.get(entry['kind'], '')} {entry['ref'] or ''}".strip()
+        ref = f"{lab['kind'].get(entry['kind'], '')} {entry['ref'] or ''}".strip()
 
         data.append([
             balance_cell(entry["balance"], muted),
@@ -320,7 +369,7 @@ def _movements_table(statement):
             ))
 
     # صف الإجماليات
-    closing_text, closing_state = _signed(statement["closing"])
+    closing_text, closing_state = _signed(statement["closing"], party=party)
     total_style = _style("st_tot", 9.5, bold=True, align=2, color=colors.white)
 
     data.append([
@@ -347,15 +396,13 @@ def _movements_table(statement):
 def _balance_banner(statement):
     """شريط الرصيد المستحق رقماً وكتابةً."""
     closing = statement["closing"]
-    text, state = _signed(closing, with_state=False)
+    text, state = _signed(closing, with_state=False, party=_party(statement))
     color = _state_color(state)
+    headline = _lab(statement)["banner"][state]
 
     if state == "zero":
-        headline = "الحساب مسدّد — لا يوجد رصيد مستحق"
         words = ""
     else:
-        who = "على العميل" if state == "debit" else "للعميل"
-        headline = f"الرصيد المستحق {who}"
         words = amount_to_words(abs(closing))
 
     label_w = 150
@@ -407,11 +454,16 @@ def generate_statement_pdf(statement, file_path=None):
     يرجع مسار الملف (statement_<client_id>.pdf افتراضياً).
     """
     client = statement["client"]
-    file_path = file_path or f"statement_{client['id']}.pdf"
+    lab = _lab(statement)
+    party = _party(statement)
+    file_path = file_path or f"{lab['file']}_{client['id']}.pdf"
 
     today = _date.today()
     issued = today.isoformat()
-    number = f"ST-{today:%Y%m%d}-{client['id']}"
+    number = (
+        f"ST-{today:%Y%m%d}-{client['id']}" if party == "client"
+        else f"SST-{today:%Y%m%d}-{client['id']}"
+    )
 
     frame_kwargs = dict(
         leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0
@@ -458,14 +510,14 @@ def generate_statement_pdf(statement, file_path=None):
         KeepTogether([_balance_banner(statement)]),
         Spacer(1, 24),
         KeepTogether([
-            _signature_block(issued, "اعتماد العميل", "توقيع المحاسب")
+            _signature_block(issued, lab["sign_party"], "توقيع المحاسب")
         ]),
     ]
 
-    closing_text, _state = _signed(statement["closing"])
+    closing_text, _state = _signed(statement["closing"], party=party)
     qr = _make_qr([
         f"Statement: {number}",
-        f"Client: {client['name']}",
+        f"{lab['qr_party']}: {client['name']}",
         f"Balance: {closing_text}",
         f"Date: {issued}",
     ])

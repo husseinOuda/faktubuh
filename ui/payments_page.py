@@ -176,7 +176,7 @@ class PaymentsPage(ListPageBase):
         ("number", "رقم السند", 110, "center"),
         ("date", "التاريخ", 100, "center"),
         ("payee", "المستفيد", 190, "e"),
-        ("expense", "المصروف", 110, "center"),
+        ("expense", "المصروف / أمر شراء", 135, "center"),
         ("category", "التصنيف", 120, "center"),
         ("method", "طريقة الدفع", 105, "center"),
         ("amount", "المبلغ", 115, "e"),
@@ -200,7 +200,7 @@ class PaymentsPage(ListPageBase):
 
     EXPORT_NAME = "payment_vouchers"
     EXPORT_HEADERS = [
-        "رقم السند", "التاريخ", "المستفيد", "المصروف", "التصنيف",
+        "رقم السند", "التاريخ", "المستفيد", "المصروف / أمر الشراء", "التصنيف",
         "طريقة الدفع", "رقم الشيك / المرجع", "المبلغ", "الحالة", "البيان",
     ]
 
@@ -212,7 +212,7 @@ class PaymentsPage(ListPageBase):
             "number": v["voucher_number"],
             "date": v["date"],
             "payee": v["payee"],
-            "expense": v["expense_number"] or "مستقلة",
+            "expense": v["expense_number"] or v.get("po_number") or "مستقلة",
             "category": v["category"],
             "method": payment_method_label(v["payment_method"]),
             "amount": format_money(v["amount"]),
@@ -228,15 +228,15 @@ class PaymentsPage(ListPageBase):
     def search_blob(self, v):
         return " ".join(str(x) for x in (
             v["voucher_number"], v["payee"], v["expense_number"] or "",
-            v["expense_title"] or "", v["category"], v["reference"],
-            v["notes"],
+            v["expense_title"] or "", v.get("po_number") or "",
+            v["category"], v["reference"], v["notes"],
         ))
 
     def export_row(self, v):
         return [
             v["voucher_number"], v["date"], v["payee"],
-            v["expense_number"] or "مستقلة", v["category"],
-            payment_method_label(v["payment_method"]), v["reference"],
+            v["expense_number"] or v.get("po_number") or "مستقلة",
+            v["category"], payment_method_label(v["payment_method"]), v["reference"],
             v["amount"], voucher_status_label(v["status"]), v["notes"],
         ]
 

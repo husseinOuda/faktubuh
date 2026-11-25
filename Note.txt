@@ -1,23 +1,32 @@
 
-👥 تطوير إدارة العملاء
+إضافة الموردون
 
-نريد تطوير هذا الإصدار (0.1.8) للتالي: 
+تم تطوير هذا الإصدار (0.1.8) ليصبح البرنامج يحتوي على شاشة الموردون والمشتريات على النحو التالي: 
 
-# تطوير إدارة العملاء: 
-## تحسين نموذج اختيار العميل
-استبدال:
-```
-CTkComboBox
-```
-ببحث ذكي (Autocomplete).
+# الموردون والمشتريات: 
+## الموردون: 
+### اسم المورد
+### الهاتف
+### البريد الإلكتروني
+### العنوان
+### الملاحظات
+### الرصيد المستحق
+### إجمالي المشتريات
+### آخر عملية شراء
 
-## إضافة: (العنوان، بريد إلكتروني، ملاحظات)
-## تعديل مباشر داخل الجدول
-## سجل فواتير العميل 
-## كشف حساب عميل / إجمالي مشتريات العميل
-## صفحة تفاصيل العميل
-## أرشيف فواتير لكل عميل
-## رصيد العميل 
+## المشتريات: 
+### أوامر الشراء: مثل فاتورة العميل تقريبا
+#### المورد
+#### رقم فاتورة المورد: عند إنشاء أمر شراء يطلب رقم فاتورة المورد، بحيث يتم تعبئة رقم الفاتورة تلقائي ويبدأ من 1 ثم يتسلسل تصاعدي. ويكون ترقيم فاتورة الزبون تختلف عن صيغة ترقيم الموردون والمشتريات مثلاً/ الترقيم: RC-2026-0001 للقبض، PV-… للصرف، EX-… للمصروف، ويبدأ كل سنة من 0001
+#### التاريخ ..إلخ حتى تصل:
+#### الإجمالي
+#### المدفوع
+#### المتبقي، وباقي التفاصيل من الختم والتوقيع والملاحظات
+
+## استلام البضاعة.
+## حساب المورد.
+## تحديث قارئ الباركود : ماسح باركود بالكاميرا.
+## تدخل المشتريات الآن في «صافي الربح» في لوحة المالية. 
 
 
 
@@ -28,42 +37,70 @@ CTkComboBox
 
 invoice_system/
 │
-├── main.py
-├── database.py
+├── main.py                          ✏️ (زر الموردين، صفحة حساب المورد، الإصدار 0.1.9)
+├── database.py                      ✏️ (جداول الموردين/الأوامر/الاستلام/products، صافي الربح)
 ├── invoices.db
 ├── pdf_generator.py
 ├── theme.py
-├── voucher_pdf.py
+├── voucher_pdf.py                   ✏️ (سند صرف مرتبط بأمر شراء)
 ├── arabic_words.py
+├── statement_pdf.py                 ✏️ (يدعم كشف حساب المورد أيضاً)
+│
+├── purchases_db.py                  🆕 (الموردون، أوامر الشراء، الاستلام، كشف المورد، الباركود)
+├── purchase_pdf.py                  🆕 (PDF أمر الشراء)
+├── goods_receipt_pdf.py             🆕 (PDF مستند استلام البضاعة)
+├── barcode_scanner.py               🆕 (محرّك فك الباركود والكاميرا)
 │
 ├── ui/
 │   ├── invoices_page.py
-│   ├── saved_invoices_page.py 
+│   ├── saved_invoices_page.py
 │   ├── receipts_page.py
-│   ├── payments_page.py
+│   ├── payments_page.py             ✏️ (عمود «المصروف / أمر شراء»)
+│   ├── expenses_page.py
 │   ├── finance_page.py
-│   ├── finance_dashboard_page.py
+│   ├── finance_dashboard_page.py    ✏️ (بطاقة المشتريات وعمودها في الرسم)
 │   ├── clients_page.py
+│   ├── client_details_page.py       ✏️ (نقاط توسعة لكشف الحساب)
 │   ├── reports_page.py
-│   ├── components/
-│   │   ├── sidebar.py
-│   │   ├── period.py
-│   │   ├── print_utils.py
-│   │   ├── list_page.py
-│   │   ├── files.py
-│   │   ├── dialogs.py
-│   │   ├── data_table.py
-│   │   ├── cards.py
-│   │   ├── buttons.py
-│   │   ├── tables.py
-│   │   ├── invoice_utils.py
-│   │   └── pdf_preview.py
+│   │
+│   ├── purchases_page.py            🆕 (الصفحة ذات التبويبات: الموردون | أوامر الشراء | استلام البضاعة)
+│   ├── suppliers_page.py            🆕 (تبويب الموردين)
+│   ├── supplier_details_page.py     🆕 (حساب المورد وكشف الحساب)
+│   ├── purchase_orders_page.py      🆕 (قائمة أوامر الشراء)
+│   ├── purchase_order_form_page.py  🆕 (إنشاء/تعديل أمر شراء + الباركود)
+│   ├── goods_receipts_page.py       🆕 (قائمة مستندات الاستلام)
+│   │
+│   └── components/
+│       ├── sidebar.py
+│       ├── period.py
+│       ├── print_utils.py
+│       ├── list_page.py
+│       ├── files.py
+│       ├── dialogs.py               ✏️ (دعم picker_class)
+│       ├── data_table.py
+│       ├── cards.py
+│       ├── buttons.py
+│       ├── tables.py
+│       ├── invoice_utils.py
+│       ├── pdf_preview.py
+│       ├── client_picker.py         ✏️ (نصوص قابلة للتخصيص)
+│       ├── client_dialogs.py
+│       ├── invoice_pdf.py
+│       ├── supplier_dialogs.py      🆕 (نافذة المورد، البحث الذكي، سند صرف المورد)
+│       ├── goods_receipt_dialogs.py 🆕 (نافذة استلام البضاعة + الباركود)
+│       └── barcode_dialog.py        🆕 (نافذة ماسح الكاميرا)
 │
 ├── assets/
 │   ├── logo.png
 │   ├── Cairo-Regular.ttf
+│   ├── stamp.png
+│   ├── signature.png
+│   ├── print.png
 │   └── icons/
-
+│
+├── README.md                        ✏️
+├── Note.txt
+└── invoices.sqbpro
 
 ```
 

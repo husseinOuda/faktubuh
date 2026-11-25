@@ -17,6 +17,7 @@ from ui.finance_page import FinancePage
 from ui.invoices_page import InvoicesPage
 from ui.clients_page import ClientsPage
 from ui.reports_page import ReportsPage
+from ui.purchases_page import PurchasesPage
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
@@ -88,14 +89,14 @@ class LoginWindow:
         
         ctk.CTkLabel(
             left_content,
-            text="نظام متكامل لإدارة الفواتير والسندات والمصروفات والعملاء",
+            text="نظام متكامل لإدارة الفواتير والسندات والمصروفات والعملاء والموردين",
             font=("Cairo", 14),
             text_color="white"
         ).pack(pady=10)
         
         ctk.CTkLabel(
             left_content,
-            text="V: 0.1.8",
+            text="V: 0.1.9",
             font=("Cairo", 13),
             text_color="#dbeafe"
         ).pack(pady=(20,0))
@@ -243,6 +244,13 @@ class App:
         ).pack(fill="x", padx=15, pady=8)
 
         ctk.CTkButton(
+            self.sidebar,
+            text="🏭 الموردون والمشتريات",
+            command=self.show_purchases,
+            **BTN_STYLE
+        ).pack(fill="x", padx=15, pady=8)
+
+        ctk.CTkButton(
             self.sidebar, 
             text="📊 التقارير", 
             command=self.show_reports,
@@ -301,6 +309,37 @@ class App:
             self.main_frame, self, client_id, tab=tab
         )
         self.pages["client_details"] = self.current_page
+        self.current_page.pack(fill="both", expand=True)
+
+    def show_purchases(self, tab="suppliers", **options):
+        """الموردون والمشتريات: تبويبا الموردون وأوامر الشراء."""
+        self.clear_main()
+        self.current_page = PurchasesPage(
+            self.main_frame, self, tab=tab, **options
+        )
+        self.pages["purchases"] = self.current_page
+        self.current_page.pack(fill="both", expand=True)
+
+    def show_supplier_account(self, supplier_id, tab="statement"):
+        """حساب المورد: كشف الحساب وأوامره واستلاماته وبياناته."""
+        from ui.supplier_details_page import SupplierAccountPage
+
+        self.clear_main()
+        self.current_page = SupplierAccountPage(
+            self.main_frame, self, supplier_id, tab=tab
+        )
+        self.pages["supplier_account"] = self.current_page
+        self.current_page.pack(fill="both", expand=True)
+
+    def show_purchase_order_form(self, po_id=None, supplier_id=None):
+        """صفحة إنشاء/تعديل أمر شراء (po_id للتعديل، supplier_id لمورد مبدئي)."""
+        from ui.purchase_order_form_page import PurchaseOrderFormPage
+
+        self.clear_main()
+        self.current_page = PurchaseOrderFormPage(
+            self.main_frame, self, po_id=po_id, supplier_id=supplier_id
+        )
+        self.pages["purchase_order_form"] = self.current_page
         self.current_page.pack(fill="both", expand=True)
 
     def show_reports(self):

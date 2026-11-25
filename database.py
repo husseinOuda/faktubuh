@@ -165,6 +165,7 @@ def create_tables():
     """)
     
     _create_finance_tables(cursor)
+    _create_purchase_tables(cursor)
     _create_settings_table(cursor)
 
     conn.commit()
@@ -1316,6 +1317,7 @@ def migrate_database():
 
         # جداول السندات والمصروفات (0.1.6) — آمنة على القواعد القديمة
         _create_finance_tables(cursor)
+        _create_purchase_tables(cursor)
         _create_settings_table(cursor)
 
         # تحديث الفواتير القديمة
@@ -1534,6 +1536,8 @@ def _create_finance_tables(cursor):
         reference TEXT DEFAULT '',
         notes TEXT DEFAULT '',
         status TEXT DEFAULT 'active',
+        supplier_id INTEGER,
+        purchase_order_id INTEGER,
         FOREIGN KEY(expense_id) REFERENCES expenses(id),
         FOREIGN KEY(category_id) REFERENCES expense_categories(id)
     )
@@ -1558,6 +1562,125 @@ def _create_finance_tables(cursor):
             "INSERT OR IGNORE INTO expense_categories (name) VALUES (?)",
             [(name,) for name in DEFAULT_EXPENSE_CATEGORIES]
         )
+
+
+# ======================
+# 0.1.9 — جداول الموردين وأوامر الشراء واستلام البضاعة
+# ======================
+def _create_purchase_tables(cursor):
+    """جداول الموردين وأوامر الشراء والاستلام + ربط سندات الصرف بالمورد/الأمر."""
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS suppliers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL,
+        phone TEXT DEFAULT '',
+        email TEXT DEFAULT '',
+        address TEXT DEFAULT '',
+        notes TEXT DEFAULT ''
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS purchase_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        po_number TEXT,
+        supplier_id INTEGER NOT NULL,
+        supplier_invoice_no TEXT DEFAULT '',
+        date TEXT,
+        subtotal REAL DEFAULT 0,
+        discount_percent REAL DEFAULT 0,
+        discount_amount REAL DEFAULT 0,
+        tax_percent REAL DEFAULT 0,
+        tax_amount REAL DEFAULT 0,
+        total REAL DEFAULT 0,
+        notes TEXT DEFAULT '',
+        status TEXT DEFAULT 'active',
+        FOREIGN KEY(supplier_id) REFERENCES suppliers(id)
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS purchase_order_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        purchase_order_id INTEGER NOT NULL,
+        item_name TEXT,
+        description TEXT DEFAULT '',
+        quantity REAL DEFAULT 0,
+        price REAL DEFAULT 0,
+        total REAL DEFAULT 0,
+        barcode TEXT DEFAULT '',
+        FOREIGN KEY(purchase_order_id) REFERENCES purchase_orders(id)
+    )
+    """)
+
+    # أصناف معروفة بالباركود: يتذكّرها البرنامج من أوامر الشراء المحفوظة
+    # ليُكمل مسح الباركود اسم الصنف ووصفه وآخر سعر شراء تلقائياً
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        barcode TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        last_price REAL DEFAULT 0,
+        updated_at TEXT DEFAULT ''
+    )
+    """)
+
+    # قواعد 0.1.8 وما قبلها (وقواعد 0.1.9 الأولى): عمود الباركود في أصناف الأمر
+    _add_column_if_missing(
+        cursor, "purchase_order_items", "barcode", "TEXT DEFAULT ''"
+    )
+
+    # استلام البضاعة: مستند استلام (جزئي أو كامل) مقابل أمر شراء
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS goods_receipts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        receipt_number TEXT,
+        purchase_order_id INTEGER NOT NULL,
+        supplier_id INTEGER NOT NULL,
+        date TEXT,
+        notes TEXT DEFAULT '',
+        status TEXT DEFAULT 'active',
+        FOREIGN KEY(purchase_order_id) REFERENCES purchase_orders(id),
+        FOREIGN KEY(supplier_id) REFERENCES suppliers(id)
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS goods_receipt_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        goods_receipt_id INTEGER NOT NULL,
+        po_item_id INTEGER NOT NULL,
+        quantity REAL DEFAULT 0,
+        FOREIGN KEY(goods_receipt_id) REFERENCES goods_receipts(id),
+        FOREIGN KEY(po_item_id) REFERENCES purchase_order_items(id)
+    )
+    """)
+
+    # قواعد 0.1.8 وما قبلها: أعمدة الربط في سندات الصرف
+    _add_column_if_missing(cursor, "payment_vouchers", "supplier_id", "INTEGER")
+    _add_column_if_missing(
+        cursor, "payment_vouchers", "purchase_order_id", "INTEGER"
+    )
+
+    for statement in (
+        "CREATE INDEX IF NOT EXISTS idx_po_supplier "
+        "ON purchase_orders(supplier_id)",
+        "CREATE INDEX IF NOT EXISTS idx_po_items "
+        "ON purchase_order_items(purchase_order_id)",
+        "CREATE INDEX IF NOT EXISTS idx_vouchers_po "
+        "ON payment_vouchers(purchase_order_id)",
+        "CREATE INDEX IF NOT EXISTS idx_vouchers_supplier "
+        "ON payment_vouchers(supplier_id)",
+        "CREATE INDEX IF NOT EXISTS idx_grn_po "
+        "ON goods_receipts(purchase_order_id)",
+        "CREATE INDEX IF NOT EXISTS idx_grn_items "
+        "ON goods_receipt_items(goods_receipt_id)",
+        "CREATE INDEX IF NOT EXISTS idx_grn_po_item "
+        "ON goods_receipt_items(po_item_id)",
+    ):
+        cursor.execute(statement)
 
 
 # ======================
@@ -2390,6 +2513,7 @@ _VOUCHER_KEYS = (
     "id", "voucher_number", "payee", "expense_id", "expense_number",
     "expense_title", "category_id", "category",
     "amount", "date", "payment_method", "reference", "notes", "status",
+    "supplier_id", "purchase_order_id", "po_number",
 )
 
 _VOUCHER_SELECT = """
@@ -2398,9 +2522,11 @@ _VOUCHER_SELECT = """
         e.expense_number, e.title,
         COALESCE(e.category_id, v.category_id), c.name,
         v.amount, v.date, v.payment_method, v.reference, v.notes,
-        COALESCE(v.status, 'active')
+        COALESCE(v.status, 'active'),
+        v.supplier_id, v.purchase_order_id, po.po_number
     FROM payment_vouchers v
     LEFT JOIN expenses e ON e.id = v.expense_id
+    LEFT JOIN purchase_orders po ON po.id = v.purchase_order_id
     LEFT JOIN expense_categories c
         ON c.id = COALESCE(e.category_id, v.category_id)
 """
@@ -2445,6 +2571,9 @@ def get_voucher_expense_summary(voucher_id):
     """ملخص المصروف المرتبط بالسند (للطباعة): الإجمالي/المدفوع/المتبقي."""
 
     voucher = get_payment_voucher(voucher_id)
+
+    if voucher and voucher.get("purchase_order_id"):
+        return _po_payment_summary(voucher["purchase_order_id"])
 
     if not voucher or not voucher["expense_id"]:
         return None
@@ -2503,6 +2632,84 @@ def _validate_voucher(conn, expense_id, amount, category_id,
             f"المبلغ ({_fmt(amount)}) أكبر من المتبقي على المصروف "
             f"{number} ({_fmt(remaining)})."
         )
+
+
+def _validate_po_payment(conn, purchase_order_id, amount,
+                         exclude_voucher_id=None):
+    """سند صرف مرتبط بأمر شراء: لا يتجاوز المتبقي على الأمر."""
+
+    if not purchase_order_id:
+        return
+
+    row = conn.execute(
+        "SELECT total, COALESCE(status, 'active'), po_number "
+        "FROM purchase_orders WHERE id = ?",
+        (purchase_order_id,)
+    ).fetchone()
+
+    if not row:
+        raise ValueError("أمر الشراء المرتبط غير موجود")
+
+    total, status, number = row
+
+    if status == VOUCHER_CANCELLED:
+        raise ValueError(f"أمر الشراء {number} ملغى ولا يمكن الصرف عليه")
+
+    paid = _money(conn.execute(
+        """
+        SELECT COALESCE(SUM(amount), 0) FROM payment_vouchers
+        WHERE purchase_order_id = ?
+          AND COALESCE(status, 'active') = 'active'
+          AND (? IS NULL OR id != ?)
+        """,
+        (purchase_order_id, exclude_voucher_id, exclude_voucher_id)
+    ).fetchone()[0])
+
+    remaining = _money(total) - paid
+
+    if remaining <= _EPS:
+        raise ValueError(f"أمر الشراء {number} مسدد بالكامل")
+
+    if amount > remaining + _EPS:
+        raise ValueError(
+            f"المبلغ ({_fmt(amount)}) أكبر من المتبقي على أمر الشراء "
+            f"{number} ({_fmt(remaining)})."
+        )
+
+
+def _po_payment_summary(purchase_order_id):
+    """إجمالي/مدفوع/متبقي أمر الشراء (لطباعة سند الصرف)."""
+
+    conn = connect()
+
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                po.total, COALESCE(po.status, 'active'),
+                COALESCE((
+                    SELECT SUM(v.amount) FROM payment_vouchers v
+                    WHERE v.purchase_order_id = po.id
+                      AND COALESCE(v.status, 'active') = 'active'
+                ), 0)
+            FROM purchase_orders po WHERE po.id = ?
+            """,
+            (purchase_order_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        return None
+
+    total, status, paid = row
+
+    return {
+        "total": _money(total),
+        "paid": _money(paid),
+        "remaining": 0.0 if status == VOUCHER_CANCELLED
+        else max(_money(total) - _money(paid), 0.0),
+    }
 
 
 def _insert_payment_voucher(cursor, payee, amount, date, method, reference,
@@ -2576,8 +2783,8 @@ def update_payment_voucher(voucher_id, payee, amount, date=None,
 
     with db_connection() as conn:
         row = conn.execute(
-            "SELECT COALESCE(status, 'active') FROM payment_vouchers "
-            "WHERE id = ?",
+            "SELECT COALESCE(status, 'active'), purchase_order_id "
+            "FROM payment_vouchers WHERE id = ?",
             (voucher_id,)
         ).fetchone()
 
@@ -2586,6 +2793,20 @@ def update_payment_voucher(voucher_id, payee, amount, date=None,
 
         if row[0] == VOUCHER_CANCELLED:
             raise ValueError("لا يمكن تعديل سند ملغى. أعد تفعيله أولاً.")
+
+        purchase_order_id = row[1]
+
+        if purchase_order_id:
+            # سند مرتبط بأمر شراء: لا يُربط بمصروف، ولا يتجاوز المتبقي
+            if expense_id:
+                raise ValueError(
+                    "هذا السند مرتبط بأمر شراء ولا يمكن ربطه بمصروف."
+                )
+
+            _validate_po_payment(
+                conn, purchase_order_id, amount,
+                exclude_voucher_id=voucher_id
+            )
 
         _validate_voucher(
             conn, expense_id, amount, category_id,
@@ -2622,18 +2843,21 @@ def set_vouchers_status(voucher_ids, status):
         for voucher_id in ids:
             row = conn.execute(
                 "SELECT expense_id, category_id, amount, voucher_number, "
-                "COALESCE(status, 'active') FROM payment_vouchers "
-                "WHERE id = ?",
+                "COALESCE(status, 'active'), purchase_order_id "
+                "FROM payment_vouchers WHERE id = ?",
                 (voucher_id,)
             ).fetchone()
 
             if not row or row[4] == status:
                 continue
 
-            expense_id, category_id, amount, number, _old = row
+            expense_id, category_id, amount, number, _old, po_id = row
 
             if status == VOUCHER_ACTIVE:
                 try:
+                    _validate_po_payment(
+                        conn, po_id, amount, exclude_voucher_id=voucher_id
+                    )
                     _validate_voucher(
                         conn, expense_id, amount, category_id,
                         exclude_voucher_id=voucher_id
@@ -2696,9 +2920,10 @@ def get_finance_summary(start=None, end=None):
       sales          إجمالي المبيعات (الفواتير غير الملغاة)
       receipts       المقبوضات (سندات القبض الفعّالة)
       expenses       المصروفات (غير الملغاة)
+      purchases      المشتريات (أوامر الشراء الفعّالة، بتاريخ الأمر)
       payments       المدفوعات (سندات الصرف الفعّالة)
       other_payments مدفوعات غير مرتبطة بمصروف
-      net_profit     صافي الربح = المبيعات − المصروفات
+      net_profit     صافي الربح = المبيعات − المصروفات − المشتريات
       net_cash       صافي النقدية = المقبوضات − المدفوعات
       receivables    ذمم العملاء المستحقة (كل الفترات)
       payables       مصروفات مستحقة لم تُسدَّد (كل الفترات)
@@ -2743,6 +2968,19 @@ def get_finance_summary(start=None, end=None):
         expenses_count = int(_scalar(
             conn,
             "SELECT COUNT(*) FROM expenses "
+            "WHERE COALESCE(status, 'active') = 'active'" + sql,
+            params
+        ))
+
+        purchases = _money(_scalar(
+            conn,
+            "SELECT SUM(total) FROM purchase_orders "
+            "WHERE COALESCE(status, 'active') = 'active'" + sql,
+            params
+        ))
+        purchases_count = int(_scalar(
+            conn,
+            "SELECT COUNT(*) FROM purchase_orders "
             "WHERE COALESCE(status, 'active') = 'active'" + sql,
             params
         ))
@@ -2820,10 +3058,12 @@ def get_finance_summary(start=None, end=None):
         "receipts_count": receipts_count,
         "expenses": expenses,
         "expenses_count": expenses_count,
+        "purchases": purchases,
+        "purchases_count": purchases_count,
         "payments": payments,
         "payments_count": payments_count,
         "other_payments": other_payments,
-        "net_profit": _money(sales - expenses),
+        "net_profit": _money(sales - expenses - purchases),
         "net_cash": _money(receipts - payments),
         "receivables": _money(receivables),
         "receivables_count": receivables_count,
@@ -2833,14 +3073,14 @@ def get_finance_summary(start=None, end=None):
 
 
 def get_monthly_series(year):
-    """12 عنصراً (شهر 1..12): المبيعات والمقبوضات والمصروفات والمدفوعات."""
+    """12 عنصراً (شهر 1..12): المبيعات والمقبوضات والمصروفات والمشتريات والمدفوعات."""
 
     year = str(int(year))
 
     series = [
         {
             "month": m, "sales": 0.0, "receipts": 0.0,
-            "expenses": 0.0, "payments": 0.0,
+            "expenses": 0.0, "purchases": 0.0, "payments": 0.0,
         }
         for m in range(1, 13)
     ]
@@ -2859,6 +3099,11 @@ def get_monthly_series(year):
         "expenses": (
             "SELECT CAST(substr(date, 6, 2) AS INTEGER), SUM(amount) "
             "FROM expenses WHERE COALESCE(status, 'active') = 'active' "
+            "AND substr(date, 1, 4) = ? GROUP BY 1"
+        ),
+        "purchases": (
+            "SELECT CAST(substr(date, 6, 2) AS INTEGER), SUM(total) "
+            "FROM purchase_orders WHERE COALESCE(status, 'active') = 'active' "
             "AND substr(date, 1, 4) = ? GROUP BY 1"
         ),
         "payments": (

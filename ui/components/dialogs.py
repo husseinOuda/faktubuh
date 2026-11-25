@@ -171,14 +171,17 @@ class FormDialog(ctk.CTkToplevel):
         return menu
 
     def add_client_picker(self, key, label, clients, initial="",
-                          on_change=None, on_add_new=None):
-        """حقل اختيار عميل ببحث ذكي (يُقرأ بـ value(key) كاسم العميل)."""
+                          on_change=None, on_add_new=None, picker_class=None):
+        """
+        حقل اختيار عميل ببحث ذكي (يُقرأ بـ value(key) كاسم العميل).
+        picker_class: صنف بديل يرث ClientPicker (مثل SupplierPicker للموردين).
+        """
         from ui.components.client_picker import ClientPicker
 
         self._add_label(label)
 
         var = ctk.StringVar(value=initial or "")
-        picker = ClientPicker(
+        picker = (picker_class or ClientPicker)(
             self.body, textvariable=var,
             on_change=on_change, on_add_new=on_add_new,
         )

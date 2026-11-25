@@ -29,6 +29,7 @@ CHART_SERIES = [
     ("sales", "المبيعات", BLUE),
     ("receipts", "المقبوضات", "#16a34a"),
     ("expenses", "المصروفات", "#dc2626"),
+    ("purchases", "المشتريات", "#c2410c"),
 ]
 
 
@@ -252,6 +253,7 @@ class FinanceDashboardPage(ctk.CTkFrame):
                 ("sales", "💰 المبيعات", BLUE),
                 ("receipts", "🧾 المقبوضات", "#16a34a"),
                 ("expenses", "📉 المصروفات", RED),
+                ("purchases", "🛒 المشتريات", "#c2410c"),
                 ("profit", "📈 صافي الربح", GREEN),
             ],
             [
@@ -335,8 +337,12 @@ class FinanceDashboardPage(ctk.CTkFrame):
         self.cards["expenses"].set(
             money(summary["expenses"]), f"{summary['expenses_count']} مصروف"
         )
+        self.cards["purchases"].set(
+            money(summary["purchases"]),
+            f"{summary['purchases_count']} أمر شراء",
+        )
         self.cards["profit"].set(
-            money(summary["net_profit"]), "المبيعات − المصروفات",
+            money(summary["net_profit"]), "المبيعات − المصروفات − المشتريات",
             GREEN if summary["net_profit"] >= 0 else RED,
         )
         self.cards["payments"].set(
